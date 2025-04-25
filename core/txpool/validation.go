@@ -276,6 +276,14 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 			return fmt.Errorf("%w: tx nonce %v, gapped nonce %v", core.ErrNonceTooHigh, tx.Nonce(), gap)
 		}
 	}
+
+	// TODO:
+	// - If tx.GasTipCap() == 0
+	// - Call gasStation precompile to ensure the tx is valid gassless tx i.e:
+	//   - tx.To() == valid gasless contract etc.
+	//   - tx.Data() == valid gasless function call etc.
+	// Skip balance check below
+
 	// Ensure the transactor has enough funds to cover the transaction costs
 	var (
 		balance           = opts.State.GetBalance(from).ToBig()
