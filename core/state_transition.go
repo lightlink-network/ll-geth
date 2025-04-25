@@ -445,6 +445,11 @@ func (st *stateTransition) preCheck() error {
 			return fmt.Errorf("%w (sender %v)", ErrEmptyAuthList, msg.From)
 		}
 	}
+
+	// TODO:
+	// - If tx.GasTipCap() == 0
+	// - Call gasStation precompile to attempt to reduce quota
+
 	return st.buyGas()
 }
 
