@@ -637,8 +637,26 @@ func (miner *Miner) fillTransactions(interrupt *atomic.Int32, env *environment) 
 	if env.header.ExcessBlobGas != nil {
 		filter.BlobFee = uint256.MustFromBig(eip4844.CalcBlobFee(miner.chainConfig, env.header))
 	}
+	// We need to get two sets of transactions:
+	// 1. Transactions that satisfy baseFee filter
+	// 2. Transactions with GasFeeCap = 0
+
+	// First get transactions that satisfy baseFee
 	filter.OnlyPlainTxs, filter.OnlyBlobTxs = true, false
 	pendingPlainTxs := miner.txpool.Pending(filter)
+
+	// Now get zero-fee transactions by setting BaseFee to 0
+	zeroFilter := filter
+	zeroFilter.BaseFee = uint256.NewInt(0)
+	filter.OnlyPlainTxs, filter.OnlyBlobTxs = true, false
+	zeroFeePlainTxs := miner.txpool.Pending(zeroFilter)
+
+	// Merge the two transaction sets, prioritizing any duplicates from the first set
+	for addr, txs := range zeroFeePlainTxs {
+		if _, exists := pendingPlainTxs[addr]; !exists {
+			pendingPlainTxs[addr] = txs
+		}
+	}
 
 	filter.OnlyPlainTxs, filter.OnlyBlobTxs = false, true
 	pendingBlobTxs := miner.txpool.Pending(filter)
