@@ -97,6 +97,9 @@ func (tx *DynamicFeeTx) value() *big.Int        { return tx.Value }
 func (tx *DynamicFeeTx) nonce() uint64          { return tx.Nonce }
 func (tx *DynamicFeeTx) to() *common.Address    { return tx.To }
 func (tx *DynamicFeeTx) isSystemTx() bool       { return false }
+func (tx *DynamicFeeTx) isGaslessTx() bool {
+	return tx.GasTipCap.Cmp(big.NewInt(0)) == 0 && tx.GasFeeCap.Cmp(big.NewInt(0)) == 0
+}
 
 func (tx *DynamicFeeTx) effectiveGasPrice(dst *big.Int, baseFee *big.Int) *big.Int {
 	if baseFee == nil {
