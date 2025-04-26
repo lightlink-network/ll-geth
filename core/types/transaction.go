@@ -97,6 +97,7 @@ type TxData interface {
 	nonce() uint64
 	to() *common.Address
 	isSystemTx() bool
+	isGaslessTx() bool
 
 	rawSignatureValues() (v, r, s *big.Int)
 	setSignatureValues(chainID, v, r, s *big.Int)
@@ -372,6 +373,11 @@ func (tx *Transaction) IsDepositTx() bool {
 // are executed in an unmetered environment & do not contribute to the block gas limit.
 func (tx *Transaction) IsSystemTx() bool {
 	return tx.inner.isSystemTx()
+}
+
+// IsGasless returns true if the transaction is a gasless transaction.
+func (tx *Transaction) IsGaslessTx() bool {
+	return tx.inner.isGaslessTx()
 }
 
 // Cost returns (gas * gasPrice) + (blobGas * blobGasPrice) + value.
