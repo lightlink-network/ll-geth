@@ -169,6 +169,7 @@ type Message struct {
 	IsDepositTx    bool                 // IsDepositTx indicates the message is force-included and can persist a mint.
 	Mint           *big.Int             // Mint is the amount to mint before EVM processing, or nil if there is no minting.
 	RollupCostData types.RollupCostData // RollupCostData caches data to compute the fee we charge for data availability
+	IsGaslessTx    bool                 // IsGaslessTx indicates the message is a gasless transaction.
 }
 
 // TransactionToMessage converts a transaction into a Message.
@@ -193,6 +194,7 @@ func TransactionToMessage(tx *types.Transaction, s types.Signer, baseFee *big.In
 		IsDepositTx:    tx.IsDepositTx(),
 		Mint:           tx.Mint(),
 		RollupCostData: tx.RollupCostData(),
+		IsGaslessTx:    tx.IsGaslessTx(),
 	}
 	// If baseFee provided, set gasPrice to effectiveGasPrice.
 	if baseFee != nil {
@@ -380,7 +382,7 @@ func (st *stateTransition) preCheck() error {
 		}
 	}
 	// Make sure that transaction gasFeeCap is greater than the baseFee (post london)
-	if st.evm.ChainConfig().IsLondon(st.evm.Context.BlockNumber) && st.msg.GasFeeCap.Cmp(big.NewInt(0)) != 0 {
+	if st.evm.ChainConfig().IsLondon(st.evm.Context.BlockNumber) && !st.msg.IsGaslessTx {
 		// Skip the checks if gas fields are zero and baseFee was explicitly disabled (eth_call)
 		skipCheck := st.evm.Config.NoBaseFee && msg.GasFeeCap.BitLen() == 0 && msg.GasTipCap.BitLen() == 0
 		if !skipCheck {
