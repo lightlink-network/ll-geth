@@ -273,8 +273,8 @@ func (st *stateTransition) buyGas() error {
 	mgval := new(big.Int).SetUint64(st.msg.GasLimit)
 	mgval.Mul(mgval, st.msg.GasPrice)
 
-	// Give EVM gas for free if gasPrice is 0
-	if st.msg.GasPrice.Cmp(big.NewInt(0)) == 0 {
+	// Give EVM gas for free if gasless txn
+	if st.msg.IsGaslessTx {
 		st.gasRemaining = st.msg.GasLimit
 		st.initialGas = st.msg.GasLimit
 		return nil
@@ -449,7 +449,7 @@ func (st *stateTransition) preCheck() error {
 	}
 
 	// TODO:
-	// - If tx.GasTipCap() == 0
+	// - If msg.IsGaslessTx
 	// - Call gasStation precompile to attempt to reduce quota
 
 	return st.buyGas()
