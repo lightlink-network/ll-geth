@@ -39,8 +39,8 @@ type txWithMinerFee struct {
 func newTxWithMinerFee(tx *txpool.LazyTransaction, from common.Address, baseFee *uint256.Int) (*txWithMinerFee, error) {
 	tip := new(uint256.Int).Set(tx.GasTipCap)
 	// This func is called on all pending txns in the txpool to set the order by fees
-	// Miner should not enforce baseFee for zero-fee transactions
-	if tx.GasFeeCap.Cmp(uint256.NewInt(0)) == 0 {
+	// Miner should not enforce baseFee for gasless txns
+	if tx.Tx.IsGaslessTx() {
 		baseFee = nil
 	}
 	if baseFee != nil {
