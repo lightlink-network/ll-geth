@@ -330,21 +330,6 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
 	eth.miner.SetPrioAddresses(config.TxPool.Locals)
 
-	// Note: Gasless txns will be pre-validated to mitigate spam.
-	// These values can not be set to 0 in CLI due to validation checks on backend.New()
-	// The miner rpc api can be used to adjust these values either via SetGasPrice method
-	// We opted to set them here so gasless txns are accepted by default on startup
-
-	// Accept into txpool:
-	// 0 gasPrice legacy txs
-	// 0 gasTipCap/maxPriorityFeePerGas for EIP-1559 txs
-	eth.txPool.SetGasTip(big.NewInt(0))
-
-	// // Accept into miner:
-	// // 0 gasPrice legacy txs
-	// // 0 gasTipCap/maxPriorityFeePerGas for EIP-1559 txs
-	eth.miner.SetGasTip(big.NewInt(0))
-
 	eth.APIBackend = &EthAPIBackend{stack.Config().ExtRPCEnabled(), stack.Config().AllowUnprotectedTxs, config.RollupDisableTxPoolAdmission, eth, nil}
 	if eth.APIBackend.allowUnprotectedTxs {
 		log.Info("Unprotected transactions allowed")
