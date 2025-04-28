@@ -43,3 +43,6 @@ profile.cov
 .vscode
 
 tests/spec-tests/
+devdata/
+password.txt
+plain_key.txt
