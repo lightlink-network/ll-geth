@@ -26,6 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/holiman/uint256"
@@ -448,10 +449,6 @@ func (st *stateTransition) preCheck() error {
 		}
 	}
 
-	// TODO:
-	// - If msg.IsGaslessTx
-	// - Call gasStation precompile to attempt to reduce quota
-
 	return st.buyGas()
 }
 
@@ -606,6 +603,27 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 		// performing the resolution and warming.
 		if addr, ok := types.ParseDelegation(st.state.GetCode(*msg.To)); ok {
 			st.state.AddAddressToAccessList(addr)
+		}
+
+		if msg.IsGaslessTx {
+			// Call gasStation.chargeCredits(address contractAddress, uint256 creditCharge)
+			method := crypto.Keccak256([]byte("chargeCredits(address,uint256)"))[:4]
+			contractAddress := st.to()
+			creditCharge := new(big.Int).SetUint64(msg.GasLimit)
+
+			var callData []byte
+			callData = append(callData, method...)
+			callData = append(callData, common.LeftPadBytes(contractAddress.Bytes(), 32)...)
+			callData = append(callData, common.LeftPadBytes(creditCharge.Bytes(), 32)...)
+
+			ret, _, vmerr = st.evm.Call(params.GasStationAddress, params.GasStationAddress, callData, st.gasRemaining, uint256.NewInt(0))
+			if vmerr != nil {
+				return &ExecutionResult{
+					UsedGas:    st.gasUsed(),
+					Err:        vmerr,
+					ReturnData: ret,
+				}, nil
+			}
 		}
 
 		// Execute the transaction's call.
