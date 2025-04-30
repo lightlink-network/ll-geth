@@ -306,7 +306,7 @@ func validateGaslessTx(tx *types.Transaction, from common.Address, opts *Validat
 	gasStationStorageSlots := calculateGasStationSlots(*tx.To())
 
 	// Get the storage for the GaslessContract struct for the given address
-	storageBaseSlot := opts.State.GetState(params.GaslessRegistryAddress, gasStationStorageSlots.StructBaseSlotHash)
+	storageBaseSlot := opts.State.GetState(params.GasStationAddress, gasStationStorageSlots.StructBaseSlotHash)
 
 	// Extract the registered and active bytes from the storage slot
 	isRegistered := storageBaseSlot[31] == 0x01
@@ -321,7 +321,7 @@ func validateGaslessTx(tx *types.Transaction, from common.Address, opts *Validat
 	}
 
 	// Get the credits from the credits slot
-	credits := opts.State.GetState(params.GaslessRegistryAddress, gasStationStorageSlots.CreditSlotHash)
+	credits := opts.State.GetState(params.GasStationAddress, gasStationStorageSlots.CreditSlotHash)
 
 	// Convert credits (Hash) and tx gas (uint64) to big.Int for comparison
 	creditsBig := new(big.Int).SetBytes(credits.Bytes())
@@ -334,7 +334,7 @@ func validateGaslessTx(tx *types.Transaction, from common.Address, opts *Validat
 	}
 
 	// Get the whitelist enabled slot
-	whitelistEnabled := opts.State.GetState(params.GaslessRegistryAddress, gasStationStorageSlots.WhitelistEnabledSlotHash)
+	whitelistEnabled := opts.State.GetState(params.GasStationAddress, gasStationStorageSlots.WhitelistEnabledSlotHash)
 
 	// Get the whitelist enabled byte from the whitelist enabled slot
 	isWhitelistEnabled := whitelistEnabled[31] == 0x01
@@ -347,7 +347,7 @@ func validateGaslessTx(tx *types.Transaction, from common.Address, opts *Validat
 		userWhitelistSlotHash := crypto.Keccak256Hash(userCombined)
 
 		// Get the whitelist status for the specific user
-		userWhitelist := opts.State.GetState(params.GaslessRegistryAddress, userWhitelistSlotHash)
+		userWhitelist := opts.State.GetState(params.GasStationAddress, userWhitelistSlotHash)
 
 		// Check if the user is whitelisted
 		userWhitelistByte := userWhitelist[31]
