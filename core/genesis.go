@@ -815,6 +815,8 @@ func DeveloperGenesisBlock(gasLimit uint64, faucet *common.Address) *Genesis {
 			params.HistoryStorageAddress:     {Nonce: 1, Code: params.HistoryStorageCode, Balance: common.Big0},
 			params.WithdrawalQueueAddress:    {Nonce: 1, Code: params.WithdrawalQueueCode, Balance: common.Big0},
 			params.ConsolidationQueueAddress: {Nonce: 1, Code: params.ConsolidationQueueCode, Balance: common.Big0},
+			// Initialize GaslessRegistry: Set Nonce and Code, storage init empty (nil map)
+			params.GaslessRegistryAddress: {Nonce: 1, Code: params.GaslessRegistryCode, Balance: common.Big0, Storage: nil},
 		},
 	}
 	if faucet != nil {
