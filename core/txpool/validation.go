@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -255,6 +256,111 @@ type ValidationOptionsWithState struct {
 	RollupCostFn RollupCostFunc
 }
 
+// GasStation struct storage slots structs
+type GasStationStorageSlots struct {
+	StructBaseSlotHash             common.Hash
+	CreditSlotHash                 common.Hash
+	WhitelistEnabledSlotHash       common.Hash
+	NestedWhitelistMapBaseSlotHash common.Hash
+}
+
+// calculateGasStationSlots computes the storage slot hashes for a specific
+// registered contract within the GasStation's `contracts` mapping.
+// It returns the base slot for the struct (holding packed fields), the slot for credits,
+// the slot for whitelistEnabled, and the base slot for the nested whitelist mapping.
+func calculateGasStationSlots(registeredContractAddress common.Address) GasStationStorageSlots {
+	gasStationStorageSlots := GasStationStorageSlots{}
+	// The 'contracts' mapping is the first state variable, so its base slot is 0.
+	mapSlot := big.NewInt(0)
+
+	// Calculate the base slot for the struct entry in the mapping
+	keyPadded := common.LeftPadBytes(registeredContractAddress.Bytes(), 32)
+	mapSlotPadded := common.LeftPadBytes(mapSlot.Bytes(), 32)
+	combined := append(keyPadded, mapSlotPadded...)
+	gasStationStorageSlots.StructBaseSlotHash = crypto.Keccak256Hash(combined)
+
+	// Calculate subsequent slots by adding offsets to the base slot hash
+	structBaseSlotBig := gasStationStorageSlots.StructBaseSlotHash.Big()
+
+	// Slot for 'credits' (offset 1 from base)
+	creditsSlotBig := new(big.Int).Add(structBaseSlotBig, big.NewInt(1))
+	gasStationStorageSlots.CreditSlotHash = common.BigToHash(creditsSlotBig)
+
+	// Slot for 'whitelistEnabled' (offset 2 from base)
+	whitelistEnabledSlotBig := new(big.Int).Add(structBaseSlotBig, big.NewInt(2))
+	gasStationStorageSlots.WhitelistEnabledSlotHash = common.BigToHash(whitelistEnabledSlotBig)
+
+	// Base slot for the nested 'whitelist' mapping (offset 3 from base)
+	nestedWhitelistMapBaseSlotBig := new(big.Int).Add(structBaseSlotBig, big.NewInt(3))
+	gasStationStorageSlots.NestedWhitelistMapBaseSlotHash = common.BigToHash(nestedWhitelistMapBaseSlotBig)
+
+	return gasStationStorageSlots
+}
+
+func validateGaslessTx(tx *types.Transaction, from common.Address, opts *ValidationOptionsWithState) error {
+	if tx.To() == nil {
+		return fmt.Errorf("gasless txn must have a valid to address")
+	}
+
+	// Calculate GasStation storage slots
+	gasStationStorageSlots := calculateGasStationSlots(*tx.To())
+
+	// Get the storage for the GaslessContract struct for the given address
+	storageBaseSlot := opts.State.GetState(params.GaslessRegistryAddress, gasStationStorageSlots.StructBaseSlotHash)
+
+	// Extract the registered and active bytes from the storage slot
+	isRegistered := storageBaseSlot[31] == 0x01
+	isActive := storageBaseSlot[30] == 0x01
+
+	if !isRegistered {
+		return fmt.Errorf("gasless transaction to unregistered address")
+	}
+
+	if !isActive {
+		return fmt.Errorf("gasless transaction to inactive address")
+	}
+
+	// Get the credits from the credits slot
+	credits := opts.State.GetState(params.GaslessRegistryAddress, gasStationStorageSlots.CreditSlotHash)
+
+	// Convert credits (Hash) and tx gas (uint64) to big.Int for comparison
+	creditsBig := new(big.Int).SetBytes(credits.Bytes())
+	txGasBig := new(big.Int).SetUint64(tx.Gas())
+
+	// Check if credits < tx gasLimitbyte
+	// TODO: IMPLEMENT FULL QUOTA/CREDIT SYSTEM
+	if creditsBig.Cmp(txGasBig) < 0 {
+		return fmt.Errorf("gasless transaction has insufficient credits: have %v, need %v", creditsBig, txGasBig)
+	}
+
+	// Get the whitelist enabled slot
+	whitelistEnabled := opts.State.GetState(params.GaslessRegistryAddress, gasStationStorageSlots.WhitelistEnabledSlotHash)
+
+	// Get the whitelist enabled byte from the whitelist enabled slot
+	isWhitelistEnabled := whitelistEnabled[31] == 0x01
+
+	if isWhitelistEnabled {
+		// Calculate slot for the specific user in the nested whitelist map
+		userKeyPadded := common.LeftPadBytes(from.Bytes(), 32)
+		mapBaseSlotPadded := common.LeftPadBytes(gasStationStorageSlots.NestedWhitelistMapBaseSlotHash.Bytes(), 32)
+		userCombined := append(userKeyPadded, mapBaseSlotPadded...)
+		userWhitelistSlotHash := crypto.Keccak256Hash(userCombined)
+
+		// Get the whitelist status for the specific user
+		userWhitelist := opts.State.GetState(params.GaslessRegistryAddress, userWhitelistSlotHash)
+
+		// Check if the user is whitelisted
+		userWhitelistByte := userWhitelist[31]
+		isUserWhitelistStorage := userWhitelistByte == 0x01
+
+		if !isUserWhitelistStorage {
+			return fmt.Errorf("gasless transaction to non-whitelisted address")
+		}
+	}
+
+	return nil
+}
+
 // ValidateTransactionWithState is a helper method to check whether a transaction
 // is valid according to the pool's internal state checks (balance, nonce, gaps).
 //
@@ -279,12 +385,9 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 		}
 	}
 
-	// If gasless txn, skip balance check below
+	// If gasless txn, validate and skip balance check below
 	if tx.IsGaslessTx() {
-		// TODO:
-		// - Call gasStation precompile to ensure the tx is valid gassless tx i.e:
-		//   - tx.To() == valid gasless contract etc.
-		return nil
+		return validateGaslessTx(tx, from, opts)
 	}
 
 	// Ensure the transactor has enough funds to cover the transaction costs
