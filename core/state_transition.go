@@ -448,7 +448,6 @@ func (st *stateTransition) preCheck() error {
 			return fmt.Errorf("%w (sender %v)", ErrEmptyAuthList, msg.From)
 		}
 	}
-
 	return st.buyGas()
 }
 
