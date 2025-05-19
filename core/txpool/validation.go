@@ -254,6 +254,10 @@ type ValidationOptionsWithState struct {
 
 	// RollupCostFn is an optional extension, to validate total rollup costs of a tx
 	RollupCostFn RollupCostFunc
+
+	// PendingCreditUsage is an optional callback to retrieve the total credits used for a specific contract
+	// i.e. the amount of credits that will be used when all pending transactions for a specific contract are processed
+	PendingCreditUsage func(contractAddr common.Address) *big.Int
 }
 
 // GasStation struct storage slots structs
@@ -320,17 +324,29 @@ func validateGaslessTx(tx *types.Transaction, from common.Address, opts *Validat
 		return fmt.Errorf("gasless transaction to inactive address")
 	}
 
-	// Get the credits from the credits slot
-	credits := opts.State.GetState(params.GasStationAddress, gasStationStorageSlots.CreditSlotHash)
+	// Get the available credits from the credits storage slot in the GasStation contract for the given address
+	availableCredits := opts.State.GetState(params.GasStationAddress, gasStationStorageSlots.CreditSlotHash)
 
 	// Convert credits (Hash) and tx gas (uint64) to big.Int for comparison
-	creditsBig := new(big.Int).SetBytes(credits.Bytes())
-	txGasBig := new(big.Int).SetUint64(tx.Gas())
+	availableCreditsBig := new(big.Int).SetBytes(availableCredits.Bytes())
+	txRequiredCreditsBig := new(big.Int).SetUint64(tx.Gas())
 
-	// Check if credits < tx gasLimitbyte
-	// TODO: IMPLEMENT FULL QUOTA/CREDIT SYSTEM
-	if creditsBig.Cmp(txGasBig) < 0 {
-		return fmt.Errorf("gasless transaction has insufficient credits: have %v, need %v", creditsBig, txGasBig)
+	// Check if contract has enough available credits to cover the cost of the tx
+	if availableCreditsBig.Cmp(txRequiredCreditsBig) < 0 {
+		return fmt.Errorf("gasless transaction has insufficient credits: have %v, need %v", availableCreditsBig, txRequiredCreditsBig)
+	}
+
+	// Check if the contract has enough available credits to cover the cost of the tx
+	// including any pending credit usage from queued mempool transactions
+	pendingCreditUsage := opts.PendingCreditUsage(*tx.To())
+
+	// If there's positive pending credit usage, an additional check is needed
+	if pendingCreditUsage.Sign() > 0 {
+		// Calculate total credits needed only if there's positive pending usage.
+		totalRequiredCreditsWithPending := new(big.Int).Add(txRequiredCreditsBig, pendingCreditUsage)
+		if availableCreditsBig.Cmp(totalRequiredCreditsWithPending) < 0 {
+			return fmt.Errorf("gasless contract has insufficient credits (including pending): pendingCreditUsage %v, txCreditsRequired %v, availableCredits %v", pendingCreditUsage, txRequiredCreditsBig, availableCreditsBig)
+		}
 	}
 
 	// Get the whitelist enabled slot

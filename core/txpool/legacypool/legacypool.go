@@ -261,6 +261,8 @@ type LegacyPool struct {
 	changesSinceReorg int // A counter for how many drops we've performed in-between reorg.
 
 	rollupCostFn txpool.RollupCostFunc // Additional rollup cost function, optional field, may be nil.
+
+	pendingCreditUsage map[common.Address]*big.Int // Track total pending credits to be used per gasless contract
 }
 
 type txpoolResetRequest struct {
@@ -656,6 +658,9 @@ func (pool *LegacyPool) validateTx(tx *types.Transaction) error {
 			return nil
 		},
 		RollupCostFn: pool.rollupCostFn,
+		PendingCreditUsage: func(contractAddr common.Address) *big.Int {
+			return pool.GetPendingCreditUsage(contractAddr)
+		},
 	}
 	if err := txpool.ValidateTransactionWithState(tx, pool.signer, opts); err != nil {
 		return err
@@ -722,6 +727,12 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 	}
 	// already validated by this point
 	from, _ := types.Sender(pool.signer, tx)
+
+	// Increment the pending credit usage for the given contract address by the
+	// amount specified.
+	if tx.IsGaslessTx() {
+		pool.IncrementPendingCreditUsage(from, new(big.Int).SetUint64(tx.Gas()))
+	}
 
 	// If the address is not yet known, request exclusivity to track the account
 	// only by this subpool until all transactions are evicted
@@ -1096,6 +1107,10 @@ func (pool *LegacyPool) removeTx(hash common.Hash, outofbound bool, unreserve bo
 		return 0
 	}
 	addr, _ := types.Sender(pool.signer, tx) // already validated during insertion
+
+	if tx.IsGaslessTx() {
+		pool.DecrementPendingCreditUsage(addr, new(big.Int).SetUint64(tx.Gas()))
+	}
 
 	// If after deletion there are no more transactions belonging to this account,
 	// relinquish the address reservation. It's a bit convoluted do this, via a
@@ -1700,6 +1715,30 @@ func (pool *LegacyPool) demoteUnexecutables() {
 			}
 		}
 	}
+}
+
+// Returns the sum of total credits to be used on execution of all pending
+// transactions in the pool to the given contract address.
+func (pool *LegacyPool) GetPendingCreditUsage(addr common.Address) *big.Int {
+	pool.mu.RLock()
+	defer pool.mu.RUnlock()
+	return pool.pendingCreditUsage[addr]
+}
+
+// Increments the pending credit usage for the given contract address by the
+// amount specified.
+func (pool *LegacyPool) IncrementPendingCreditUsage(addr common.Address, usage *big.Int) {
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+	pool.pendingCreditUsage[addr] = new(big.Int).Add(pool.pendingCreditUsage[addr], usage)
+}
+
+// Decrements the pending credit usage for the given contract address by the
+// amount specified.
+func (pool *LegacyPool) DecrementPendingCreditUsage(addr common.Address, usage *big.Int) {
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+	pool.pendingCreditUsage[addr] = new(big.Int).Sub(pool.pendingCreditUsage[addr], usage)
 }
 
 // addressByHeartbeat is an account address tagged with its last activity timestamp.
