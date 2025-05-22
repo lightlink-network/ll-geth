@@ -341,7 +341,7 @@ func validateGaslessTx(tx *types.Transaction, from common.Address, opts *Validat
 	pendingCreditUsage := opts.PendingCreditUsage(*tx.To())
 
 	// If there's positive pending credit usage, an additional check is needed
-	if pendingCreditUsage.Sign() > 0 {
+	if pendingCreditUsage != nil && pendingCreditUsage.Sign() > 0 {
 		// Calculate total credits needed only if there's positive pending usage.
 		totalRequiredCreditsWithPending := new(big.Int).Add(txRequiredCreditsBig, pendingCreditUsage)
 		if availableCreditsBig.Cmp(totalRequiredCreditsWithPending) < 0 {

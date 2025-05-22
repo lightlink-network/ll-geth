@@ -277,20 +277,21 @@ func New(config Config, chain BlockChain) *LegacyPool {
 
 	// Create the transaction pool with its initial settings
 	pool := &LegacyPool{
-		config:          config,
-		chain:           chain,
-		chainconfig:     chain.Config(),
-		signer:          types.LatestSigner(chain.Config()),
-		pending:         make(map[common.Address]*list),
-		queue:           make(map[common.Address]*list),
-		beats:           make(map[common.Address]time.Time),
-		all:             newLookup(),
-		reqResetCh:      make(chan *txpoolResetRequest),
-		reqPromoteCh:    make(chan *accountSet),
-		queueTxEventCh:  make(chan *types.Transaction),
-		reorgDoneCh:     make(chan chan struct{}),
-		reorgShutdownCh: make(chan struct{}),
-		initDoneCh:      make(chan struct{}),
+		config:             config,
+		chain:              chain,
+		chainconfig:        chain.Config(),
+		signer:             types.LatestSigner(chain.Config()),
+		pending:            make(map[common.Address]*list),
+		queue:              make(map[common.Address]*list),
+		beats:              make(map[common.Address]time.Time),
+		all:                newLookup(),
+		reqResetCh:         make(chan *txpoolResetRequest),
+		reqPromoteCh:       make(chan *accountSet),
+		queueTxEventCh:     make(chan *types.Transaction),
+		reorgDoneCh:        make(chan chan struct{}),
+		reorgShutdownCh:    make(chan struct{}),
+		initDoneCh:         make(chan struct{}),
+		pendingCreditUsage: make(map[common.Address]*big.Int),
 	}
 	pool.priced = newPricedList(pool.all)
 
@@ -731,7 +732,7 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 	// Increment the pending credit usage for the given contract address by the
 	// amount specified.
 	if tx.IsGaslessTx() {
-		pool.IncrementPendingCreditUsage(from, new(big.Int).SetUint64(tx.Gas()))
+		pool.IncrementPendingCreditUsage(*tx.To(), new(big.Int).SetUint64(tx.Gas()))
 	}
 
 	// If the address is not yet known, request exclusivity to track the account
@@ -1720,24 +1721,24 @@ func (pool *LegacyPool) demoteUnexecutables() {
 // Returns the sum of total credits to be used on execution of all pending
 // transactions in the pool to the given contract address.
 func (pool *LegacyPool) GetPendingCreditUsage(addr common.Address) *big.Int {
-	pool.mu.RLock()
-	defer pool.mu.RUnlock()
 	return pool.pendingCreditUsage[addr]
 }
 
 // Increments the pending credit usage for the given contract address by the
 // amount specified.
 func (pool *LegacyPool) IncrementPendingCreditUsage(addr common.Address, usage *big.Int) {
-	pool.mu.Lock()
-	defer pool.mu.Unlock()
+	if pool.pendingCreditUsage[addr] == nil {
+		return
+	}
 	pool.pendingCreditUsage[addr] = new(big.Int).Add(pool.pendingCreditUsage[addr], usage)
 }
 
 // Decrements the pending credit usage for the given contract address by the
 // amount specified.
 func (pool *LegacyPool) DecrementPendingCreditUsage(addr common.Address, usage *big.Int) {
-	pool.mu.Lock()
-	defer pool.mu.Unlock()
+	if pool.pendingCreditUsage[addr] == nil {
+		return
+	}
 	pool.pendingCreditUsage[addr] = new(big.Int).Sub(pool.pendingCreditUsage[addr], usage)
 }
 
