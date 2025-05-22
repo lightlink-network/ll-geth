@@ -276,8 +276,9 @@ func (st *stateTransition) buyGas() error {
 
 	// Give EVM gas for free if gasless txn
 	if st.msg.IsGaslessTx {
-		st.gasRemaining = st.msg.GasLimit
 		st.initialGas = st.msg.GasLimit
+		st.gasRemaining += st.msg.GasLimit
+		st.gp.SubGas(st.msg.GasLimit)
 		return nil
 	}
 
