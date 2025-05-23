@@ -585,7 +585,7 @@ func (rs Receipts) DeriveFields(config *params.ChainConfig, hash common.Hash, nu
 			return err
 		}
 		for i := 0; i < len(rs); i++ {
-			if txs[i].IsDepositTx() {
+			if txs[i].IsDepositTx() || txs[i].IsGaslessTx() {
 				continue
 			}
 			rs[i].L1GasPrice = gasParams.l1BaseFee
