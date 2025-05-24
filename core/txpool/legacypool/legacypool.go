@@ -1110,7 +1110,7 @@ func (pool *LegacyPool) removeTx(hash common.Hash, outofbound bool, unreserve bo
 
 	// Decrement pending usage when a tx is removed from the pool
 	if tx.IsGaslessTx() {
-		if pool.pendingCreditUsage[addr] != nil {
+		if pool.pendingCreditUsage[*tx.To()] != nil {
 			pool.pendingCreditUsage[*tx.To()] = new(big.Int).Sub(pool.pendingCreditUsage[*tx.To()], new(big.Int).SetUint64(tx.Gas()))
 		}
 	}
