@@ -276,7 +276,7 @@ func (st *stateTransition) buyGas() error {
 
 	// Give EVM gas for free if gasless txn
 	if st.msg.IsGaslessTx {
-		st.initialGas = st.msg.GasLimit + 5000 // add 5000 gas to the initial gas to cover the gasStation call
+		st.initialGas = st.msg.GasLimit
 		st.gasRemaining += st.msg.GasLimit
 		st.gp.SubGas(st.msg.GasLimit)
 		return nil
@@ -501,6 +501,47 @@ func (st *stateTransition) execute() (*ExecutionResult, error) {
 	return result, err
 }
 
+// GasStation struct storage slots structs
+type GasStationStorageSlots struct {
+	StructBaseSlotHash             common.Hash
+	CreditSlotHash                 common.Hash
+	WhitelistEnabledSlotHash       common.Hash
+	NestedWhitelistMapBaseSlotHash common.Hash
+}
+
+// calculateGasStationSlots computes the storage slot hashes for a specific
+// registered contract within the GasStation's `contracts` mapping.
+// It returns the base slot for the struct (holding packed fields), the slot for credits,
+// the slot for whitelistEnabled, and the base slot for the nested whitelist mapping.
+func CalculateGasStationSlots(registeredContractAddress common.Address) GasStationStorageSlots {
+	gasStationStorageSlots := GasStationStorageSlots{}
+	// The 'contracts' mapping is the first state variable, so its base slot is 0.
+	mapSlot := big.NewInt(0)
+
+	// Calculate the base slot for the struct entry in the mapping
+	keyPadded := common.LeftPadBytes(registeredContractAddress.Bytes(), 32)
+	mapSlotPadded := common.LeftPadBytes(mapSlot.Bytes(), 32)
+	combined := append(keyPadded, mapSlotPadded...)
+	gasStationStorageSlots.StructBaseSlotHash = crypto.Keccak256Hash(combined)
+
+	// Calculate subsequent slots by adding offsets to the base slot hash
+	structBaseSlotBig := gasStationStorageSlots.StructBaseSlotHash.Big()
+
+	// Slot for 'credits' (offset 1 from base)
+	creditsSlotBig := new(big.Int).Add(structBaseSlotBig, big.NewInt(1))
+	gasStationStorageSlots.CreditSlotHash = common.BigToHash(creditsSlotBig)
+
+	// Slot for 'whitelistEnabled' (offset 2 from base)
+	whitelistEnabledSlotBig := new(big.Int).Add(structBaseSlotBig, big.NewInt(2))
+	gasStationStorageSlots.WhitelistEnabledSlotHash = common.BigToHash(whitelistEnabledSlotBig)
+
+	// Base slot for the nested 'whitelist' mapping (offset 3 from base)
+	nestedWhitelistMapBaseSlotBig := new(big.Int).Add(structBaseSlotBig, big.NewInt(3))
+	gasStationStorageSlots.NestedWhitelistMapBaseSlotHash = common.BigToHash(nestedWhitelistMapBaseSlotBig)
+
+	return gasStationStorageSlots
+}
+
 func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 	// First check this message satisfies all consensus rules before
 	// applying the message. The rules include these clauses
@@ -605,27 +646,6 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 			st.state.AddAddressToAccessList(addr)
 		}
 
-		if msg.IsGaslessTx {
-			// Call gasStation.chargeCredits(address contractAddress, uint256 creditCharge)
-			method := crypto.Keccak256([]byte("chargeCredits(address,uint256)"))[:4]
-			contractAddress := st.to()
-			creditCharge := new(big.Int).SetUint64(msg.GasLimit)
-
-			var callData []byte
-			callData = append(callData, method...)
-			callData = append(callData, common.LeftPadBytes(contractAddress.Bytes(), 32)...)
-			callData = append(callData, common.LeftPadBytes(creditCharge.Bytes(), 32)...)
-
-			ret, _, vmerr = st.evm.Call(params.GasStationAddress, params.GasStationAddress, callData, st.gasRemaining, uint256.NewInt(0))
-			if vmerr != nil {
-				return &ExecutionResult{
-					UsedGas:    st.gasUsed(),
-					Err:        vmerr,
-					ReturnData: ret,
-				}, nil
-			}
-		}
-
 		// Execute the transaction's call.
 		ret, st.gasRemaining, vmerr = st.evm.Call(msg.From, st.to(), msg.Data, st.gasRemaining, value)
 	}
@@ -644,6 +664,28 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 			Err:        vmerr,
 			ReturnData: ret,
 		}, nil
+	}
+
+	if msg.IsGaslessTx {
+		// Calculate GasStation storage slots
+		gasStationStorageSlots := CalculateGasStationSlots(*msg.To)
+		availableCredits := st.state.GetState(params.GasStationAddress, gasStationStorageSlots.CreditSlotHash)
+
+		// Convert credits (Hash) and tx gas (uint64) to big.Int for comparison
+		availableCreditsBig := new(big.Int).SetBytes(availableCredits.Bytes())
+		txRequiredCreditsBig := new(big.Int).SetUint64(st.gasUsed())
+
+		// Check if contract has enough available credits to cover the cost of the tx
+		if availableCreditsBig.Cmp(txRequiredCreditsBig) < 0 {
+			return &ExecutionResult{
+				UsedGas:    st.gasUsed(),
+				Err:        fmt.Errorf("gasless transaction has insufficient credits: have %v, need %v", availableCreditsBig, txRequiredCreditsBig),
+				ReturnData: ret,
+			}, nil
+		}
+
+		// Deduct the credits from the contract state directly
+		st.state.SetState(params.GasStationAddress, gasStationStorageSlots.CreditSlotHash, common.BigToHash(new(big.Int).Sub(availableCreditsBig, txRequiredCreditsBig)))
 	}
 
 	// Compute refund counter, capped to a refund quotient.

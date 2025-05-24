@@ -260,54 +260,13 @@ type ValidationOptionsWithState struct {
 	PendingCreditUsage func(contractAddr common.Address) *big.Int
 }
 
-// GasStation struct storage slots structs
-type GasStationStorageSlots struct {
-	StructBaseSlotHash             common.Hash
-	CreditSlotHash                 common.Hash
-	WhitelistEnabledSlotHash       common.Hash
-	NestedWhitelistMapBaseSlotHash common.Hash
-}
-
-// calculateGasStationSlots computes the storage slot hashes for a specific
-// registered contract within the GasStation's `contracts` mapping.
-// It returns the base slot for the struct (holding packed fields), the slot for credits,
-// the slot for whitelistEnabled, and the base slot for the nested whitelist mapping.
-func calculateGasStationSlots(registeredContractAddress common.Address) GasStationStorageSlots {
-	gasStationStorageSlots := GasStationStorageSlots{}
-	// The 'contracts' mapping is the first state variable, so its base slot is 0.
-	mapSlot := big.NewInt(0)
-
-	// Calculate the base slot for the struct entry in the mapping
-	keyPadded := common.LeftPadBytes(registeredContractAddress.Bytes(), 32)
-	mapSlotPadded := common.LeftPadBytes(mapSlot.Bytes(), 32)
-	combined := append(keyPadded, mapSlotPadded...)
-	gasStationStorageSlots.StructBaseSlotHash = crypto.Keccak256Hash(combined)
-
-	// Calculate subsequent slots by adding offsets to the base slot hash
-	structBaseSlotBig := gasStationStorageSlots.StructBaseSlotHash.Big()
-
-	// Slot for 'credits' (offset 1 from base)
-	creditsSlotBig := new(big.Int).Add(structBaseSlotBig, big.NewInt(1))
-	gasStationStorageSlots.CreditSlotHash = common.BigToHash(creditsSlotBig)
-
-	// Slot for 'whitelistEnabled' (offset 2 from base)
-	whitelistEnabledSlotBig := new(big.Int).Add(structBaseSlotBig, big.NewInt(2))
-	gasStationStorageSlots.WhitelistEnabledSlotHash = common.BigToHash(whitelistEnabledSlotBig)
-
-	// Base slot for the nested 'whitelist' mapping (offset 3 from base)
-	nestedWhitelistMapBaseSlotBig := new(big.Int).Add(structBaseSlotBig, big.NewInt(3))
-	gasStationStorageSlots.NestedWhitelistMapBaseSlotHash = common.BigToHash(nestedWhitelistMapBaseSlotBig)
-
-	return gasStationStorageSlots
-}
-
 func validateGaslessTx(tx *types.Transaction, from common.Address, opts *ValidationOptionsWithState) error {
 	if tx.To() == nil {
 		return fmt.Errorf("gasless txn must have a valid to address")
 	}
 
 	// Calculate GasStation storage slots
-	gasStationStorageSlots := calculateGasStationSlots(*tx.To())
+	gasStationStorageSlots := core.CalculateGasStationSlots(*tx.To())
 
 	// Get the storage for the GaslessContract struct for the given address
 	storageBaseSlot := opts.State.GetState(params.GasStationAddress, gasStationStorageSlots.StructBaseSlotHash)
