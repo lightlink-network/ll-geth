@@ -274,14 +274,6 @@ func (st *stateTransition) buyGas() error {
 	mgval := new(big.Int).SetUint64(st.msg.GasLimit)
 	mgval.Mul(mgval, st.msg.GasPrice)
 
-	// Give EVM gas for free if gasless txn
-	if st.msg.IsGaslessTx {
-		st.initialGas = st.msg.GasLimit
-		st.gasRemaining += st.msg.GasLimit
-		st.gp.SubGas(st.msg.GasLimit)
-		return nil
-	}
-
 	var l1Cost *big.Int
 	var operatorCost *uint256.Int
 	if !st.msg.SkipNonceChecks && !st.msg.SkipFromEOACheck {
@@ -383,8 +375,16 @@ func (st *stateTransition) preCheck() error {
 			return fmt.Errorf("%w: address %v, len(code): %d", ErrSenderNoEOA, msg.From.Hex(), len(code))
 		}
 	}
+
+	// Give EVM gas for free if gasless txn
+	if st.msg.IsGaslessTx {
+		st.initialGas = st.msg.GasLimit
+		st.gasRemaining += st.msg.GasLimit
+		return st.gp.SubGas(st.msg.GasLimit)
+	}
+
 	// Make sure that transaction gasFeeCap is greater than the baseFee (post london)
-	if st.evm.ChainConfig().IsLondon(st.evm.Context.BlockNumber) && !st.msg.IsGaslessTx {
+	if st.evm.ChainConfig().IsLondon(st.evm.Context.BlockNumber) {
 		// Skip the checks if gas fields are zero and baseFee was explicitly disabled (eth_call)
 		skipCheck := st.evm.Config.NoBaseFee && msg.GasFeeCap.BitLen() == 0 && msg.GasTipCap.BitLen() == 0
 		if !skipCheck {
