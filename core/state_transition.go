@@ -686,6 +686,19 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 
 		// Deduct the credits from the contract state directly
 		st.state.SetState(params.GasStationAddress, gasStationStorageSlots.CreditSlotHash, common.BigToHash(new(big.Int).Sub(availableCreditsBig, txRequiredCreditsBig)))
+
+		// Emit CreditsUsed event: CreditsUsed(address indexed contractAddress, address caller, uint256 gasUsed)
+		st.state.AddLog(&types.Log{
+			Address: params.GasStationAddress,
+			Topics: []common.Hash{
+				crypto.Keccak256Hash([]byte("CreditsUsed(address,address,uint256)")), // Event signature
+				common.BytesToHash(st.msg.To.Bytes()),                                // contractAddress (indexed)
+			},
+			Data: append(
+				common.LeftPadBytes(st.msg.From.Bytes(), 32),                        // caller (not indexed)
+				common.LeftPadBytes(big.NewInt(int64(st.gasUsed())).Bytes(), 32)..., // gasUsed (not indexed)
+			),
+		})
 	}
 
 	// Compute refund counter, capped to a refund quotient.
