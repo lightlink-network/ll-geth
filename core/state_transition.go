@@ -273,7 +273,6 @@ func (st *stateTransition) to() common.Address {
 func (st *stateTransition) buyGas() error {
 	mgval := new(big.Int).SetUint64(st.msg.GasLimit)
 	mgval.Mul(mgval, st.msg.GasPrice)
-
 	var l1Cost *big.Int
 	var operatorCost *uint256.Int
 	if !st.msg.SkipNonceChecks && !st.msg.SkipFromEOACheck {
