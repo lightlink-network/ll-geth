@@ -730,8 +730,22 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 	from, _ := types.Sender(pool.signer, tx)
 
 	// Increment the pending credit usage for the given contract address by the amount specified.
-	if tx.IsGaslessTx() {
-		pool.pendingCreditUsage[*tx.To()] = new(big.Int).Add(pool.pendingCreditUsage[*tx.To()], new(big.Int).SetUint64(tx.Gas()))
+	if tx.IsGaslessTx() && tx.To() != nil {
+		currentCreditUsage, found := pool.pendingCreditUsage[*tx.To()]
+		if !found {
+			// If the address is not in the map, initialize its credit usage with txGasValue.
+			// A new big.Int is created. If txGasValue is 0, an entry for 0 is created.
+			pool.pendingCreditUsage[*tx.To()] = new(big.Int).SetUint64(tx.Gas())
+		} else {
+			// If the address exists, add txGasValue to its current credit usage.
+			// Only perform the addition if txGasValue is greater than 0 to avoid
+			// unnecessary allocation and computation for adding zero.
+			if tx.Gas() > 0 {
+				gasToAdd := new(big.Int).SetUint64(tx.Gas())
+				// Add modifies currentCreditUsage in place.
+				currentCreditUsage.Add(currentCreditUsage, gasToAdd)
+			}
+		}
 	}
 
 	// If the address is not yet known, request exclusivity to track the account
@@ -1109,9 +1123,21 @@ func (pool *LegacyPool) removeTx(hash common.Hash, outofbound bool, unreserve bo
 	addr, _ := types.Sender(pool.signer, tx) // already validated during insertion
 
 	// Decrement pending usage when a tx is removed from the pool
-	if tx.IsGaslessTx() {
-		if pool.pendingCreditUsage[*tx.To()] != nil {
-			pool.pendingCreditUsage[*tx.To()] = new(big.Int).Sub(pool.pendingCreditUsage[*tx.To()], new(big.Int).SetUint64(tx.Gas()))
+	if tx.IsGaslessTx() && tx.To() != nil {
+		currentCreditUsage, found := pool.pendingCreditUsage[*tx.To()]
+		if found {
+			// If the address exists, subtract txGasValue from its current credit usage.
+			// Only perform the subtraction if txGasValue is greater than 0 to avoid
+			// unnecessary allocation and computation for subtracting zero.
+			if tx.Gas() > 0 {
+				gasToSubtract := new(big.Int).SetUint64(tx.Gas())
+				// Subtract modifies currentCreditUsage in place.
+				currentCreditUsage.Sub(currentCreditUsage, gasToSubtract)
+				// If negative, set to 0
+				if currentCreditUsage.Sign() < 0 {
+					currentCreditUsage.SetUint64(0)
+				}
+			}
 		}
 	}
 
