@@ -162,7 +162,7 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 		}
 	}
 	// Ensure the gasprice is high enough to cover the requirement of the calling pool (except for gasless txns)
-	// This means we can contiune to enfore the minimum tip required for the miner for all non-gasless txns
+	// This means we can continue to enforce the minimum tip required for the miner for all non-gasless txns
 	// i.e. txns must either: 1. have a valid minimum tip/gasPrice or be a gasless txn
 	if tx.GasTipCapIntCmp(opts.MinTip) < 0 && !tx.IsGaslessTx() {
 		return fmt.Errorf("%w: gas tip cap %v, minimum needed %v", ErrUnderpriced, tx.GasTipCap(), opts.MinTip)
