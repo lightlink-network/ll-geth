@@ -718,7 +718,7 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 	// OP-Stack: Note for deposit tx there is no ETH refunded for unused gas, but that's taken care of by the fact that gasPrice
 	// is always 0 for deposit tx. So calling refundGas will ensure the gasUsed accounting is correct without actually
 	// changing the sender's balance.
-	if st.msg.IsDepositTx && rules.IsOptimismRegolith {
+	if (st.msg.IsDepositTx && rules.IsOptimismRegolith) || st.msg.IsGaslessTx {
 		// Skip coinbase payments for deposit tx in Regolith
 		return &ExecutionResult{
 			UsedGas:     st.gasUsed(),
