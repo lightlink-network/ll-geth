@@ -68,9 +68,9 @@ jobs:
         id: get-tag
         run: |
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            echo "::set-output name=version::${GITHUB_REF#refs/tags/}"
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           else
-            echo "::set-output name=version::${GITHUB_SHA::7}"
+            echo "version=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
           fi
 
       - name: Push Image
