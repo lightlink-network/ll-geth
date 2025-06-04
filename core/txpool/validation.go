@@ -297,14 +297,16 @@ func validateGaslessTx(tx *types.Transaction, from common.Address, opts *Validat
 
 	// Check if the contract has enough available credits to cover the cost of the tx
 	// including any pending credit usage from queued mempool transactions
-	pendingCreditUsage := opts.PendingCreditUsage(*tx.To())
+	if opts.PendingCreditUsage != nil {
+		pendingCreditUsage := opts.PendingCreditUsage(*tx.To())
 
-	// If there's positive pending credit usage, an additional check is needed
-	if pendingCreditUsage != nil && pendingCreditUsage.Sign() > 0 {
-		// Calculate total credits needed only if there's positive pending usage.
-		totalRequiredCreditsWithPending := new(big.Int).Add(txRequiredCreditsBig, pendingCreditUsage)
-		if availableCreditsBig.Cmp(totalRequiredCreditsWithPending) < 0 {
-			return fmt.Errorf("gasless contract has insufficient credits (including pending): pendingCreditUsage %v, txCreditsRequired %v, availableCredits %v", pendingCreditUsage, txRequiredCreditsBig, availableCreditsBig)
+		// If there's positive pending credit usage, an additional check is needed
+		if pendingCreditUsage != nil && pendingCreditUsage.Sign() > 0 {
+			// Calculate total credits needed only if there's positive pending usage.
+			totalRequiredCreditsWithPending := new(big.Int).Add(txRequiredCreditsBig, pendingCreditUsage)
+			if availableCreditsBig.Cmp(totalRequiredCreditsWithPending) < 0 {
+				return fmt.Errorf("gasless contract has insufficient credits (including pending): pendingCreditUsage %v, txCreditsRequired %v, availableCredits %v", pendingCreditUsage, txRequiredCreditsBig, availableCreditsBig)
+			}
 		}
 	}
 
