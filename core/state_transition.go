@@ -514,19 +514,27 @@ type GasStationStorageSlots struct {
 // the slot for whitelistEnabled, and the base slot for the nested whitelist mapping.
 func CalculateGasStationSlots(registeredContractAddress common.Address) GasStationStorageSlots {
 	gasStationStorageSlots := GasStationStorageSlots{}
-	// The 'contracts' mapping is the first state variable, so its base slot is 0.
-	mapSlot := big.NewInt(0)
+
+	// ERC-7201 storage location for GasStationStorage
+	// bytes32 private constant GasStationStorageLocation = 0xc2eaf2cedf9e23687c6eb7c4717aa3eacbd015cc86eaad3f51aae2d3c955db00;
+	gasStationStorageLocation := common.HexToHash("0xc2eaf2cedf9e23687c6eb7c4717aa3eacbd015cc86eaad3f51aae2d3c955db00")
+
+	// The 'contracts' mapping is at offset 1 from the storage location
+	// (dao is at offset 0, contracts is at offset 1)
+	contractsMapSlot := new(big.Int).Add(gasStationStorageLocation.Big(), big.NewInt(1))
 
 	// Calculate the base slot for the struct entry in the mapping
 	keyPadded := common.LeftPadBytes(registeredContractAddress.Bytes(), 32)
-	mapSlotPadded := common.LeftPadBytes(mapSlot.Bytes(), 32)
+	mapSlotPadded := common.LeftPadBytes(contractsMapSlot.Bytes(), 32)
 	combined := append(keyPadded, mapSlotPadded...)
 	gasStationStorageSlots.StructBaseSlotHash = crypto.Keccak256Hash(combined)
 
 	// Calculate subsequent slots by adding offsets to the base slot hash
+	// New struct layout: bool registered, bool active, address admin (all packed in slot 0)
+	// uint256 credits (slot 1), bool whitelistEnabled (slot 2), mapping whitelist (slot 3)
 	structBaseSlotBig := gasStationStorageSlots.StructBaseSlotHash.Big()
 
-	// Slot for 'credits' (offset 1 from base)
+	// Slot for 'credits' (offset 1 from base - after the packed bools and address)
 	creditsSlotBig := new(big.Int).Add(structBaseSlotBig, big.NewInt(1))
 	gasStationStorageSlots.CreditSlotHash = common.BigToHash(creditsSlotBig)
 
