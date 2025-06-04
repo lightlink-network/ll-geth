@@ -35,7 +35,8 @@ type txWithMinerFee struct {
 
 // newTxWithMinerFee creates a wrapped transaction, calculating the effective
 // miner gasTipCap if a base fee is provided.
-// Returns error in case of a negative effective miner gasTipCap.
+// newTxWithMinerFee calculates the effective miner fee for a transaction, considering the base fee unless the transaction is gasless.
+// Returns a txWithMinerFee containing the transaction, sender, and computed miner fee, or an error if the gas fee cap is below the base fee or the effective tip is negative.
 func newTxWithMinerFee(tx *txpool.LazyTransaction, from common.Address, baseFee *uint256.Int) (*txWithMinerFee, error) {
 	tip := new(uint256.Int).Set(tx.GasTipCap)
 	// This func is called on all pending txns in the txpool to set the order by fees

@@ -270,7 +270,8 @@ type txpoolResetRequest struct {
 }
 
 // New creates a new transaction pool to gather, sort and filter inbound
-// transactions from the network.
+// New creates and initializes a new LegacyPool for managing Ethereum transactions.
+// It sets up internal structures, applies configuration sanitization, and prepares the pool for transaction processing.
 func New(config Config, chain BlockChain) *LegacyPool {
 	// Sanitize the input to ensure no vulnerable gas prices are set
 	config = (&config).sanitize()

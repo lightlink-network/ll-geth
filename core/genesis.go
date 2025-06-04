@@ -789,7 +789,12 @@ func DefaultHoleskyGenesisBlock() *Genesis {
 	}
 }
 
-// DeveloperGenesisBlock returns the 'geth --dev' genesis block.
+// DeveloperGenesisBlock creates a genesis block specification for the developer network ("geth --dev" mode) with precompiled contracts, pre-deployed system contracts, and an optional pre-funded faucet account.
+// 
+// The returned genesis includes all standard precompiles, system contracts (such as BeaconRoots, HistoryStorage, WithdrawalQueue, ConsolidationQueue, and GasStation), and sets their initial code, nonce, and balance. If a faucet address is provided, it is pre-funded with a large balance for development purposes.
+// 
+// gasLimit specifies the block gas limit for the genesis block.
+// faucet, if non-nil, is the address to be pre-funded in the genesis allocation.
 func DeveloperGenesisBlock(gasLimit uint64, faucet *common.Address) *Genesis {
 	// Override the default period to the user requested one
 	config := *params.AllDevChainProtocolChanges

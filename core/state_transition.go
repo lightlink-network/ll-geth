@@ -173,7 +173,9 @@ type Message struct {
 	IsGaslessTx    bool                 // IsGaslessTx indicates the message is a gasless transaction.
 }
 
-// TransactionToMessage converts a transaction into a Message.
+// TransactionToMessage constructs a Message from a transaction, extracting all relevant fields and computing the sender address.
+// If a base fee is provided, it sets the gas price to the effective gas price based on the tip and fee cap.
+// Returns the resulting Message and any error encountered while deriving the sender address.
 func TransactionToMessage(tx *types.Transaction, s types.Signer, baseFee *big.Int) (*Message, error) {
 	msg := &Message{
 		Nonce:                 tx.Nonce(),
@@ -511,7 +513,8 @@ type GasStationStorageSlots struct {
 // calculateGasStationSlots computes the storage slot hashes for a specific
 // registered contract within the GasStation's `contracts` mapping.
 // It returns the base slot for the struct (holding packed fields), the slot for credits,
-// the slot for whitelistEnabled, and the base slot for the nested whitelist mapping.
+// CalculateGasStationSlots computes the storage slot hashes for a registered contract within the GasStation contract's mapping.
+// It returns the struct base slot, credits slot, whitelist enabled slot, and the base slot for the nested whitelist mapping for the given contract address.
 func CalculateGasStationSlots(registeredContractAddress common.Address) GasStationStorageSlots {
 	gasStationStorageSlots := GasStationStorageSlots{}
 	// The 'contracts' mapping is the first state variable, so its base slot is 0.

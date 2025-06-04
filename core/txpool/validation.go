@@ -80,7 +80,9 @@ type ValidationFunction func(tx *types.Transaction, head *types.Header, signer t
 // (balance, nonce, etc).
 //
 // This check is public to allow different transaction pools to check the basic
-// rules without duplicating code and running the risk of missed updates.
+// ValidateTransaction performs stateless validation of a transaction against consensus and pool-specific rules.
+//
+// It checks transaction type support, size limits, protocol activation status, gas and fee constraints, signature validity, and intrinsic gas requirements. Special handling is included for blob and set code transactions, as well as for gasless transactions, which bypass the minimum tip requirement. Returns a detailed error describing the first validation failure encountered.
 func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types.Signer, opts *ValidationOptions) error {
 	// No unauthenticated deposits allowed in the transaction pool.
 	// This is for spam protection, not consensus,
@@ -260,6 +262,9 @@ type ValidationOptionsWithState struct {
 	PendingCreditUsage func(contractAddr common.Address) *big.Int
 }
 
+// validateGaslessTx performs stateful validation of a gasless transaction.
+// It checks that the recipient contract is registered and active in the GasStation contract, verifies sufficient available credits (including pending usage) to cover the transaction's gas, and, if whitelisting is enabled, ensures the sender is whitelisted.
+// Returns an error if any validation fails.
 func validateGaslessTx(tx *types.Transaction, from common.Address, opts *ValidationOptionsWithState) error {
 	if tx.To() == nil {
 		return fmt.Errorf("gasless txn must have a valid to address")
@@ -340,7 +345,11 @@ func validateGaslessTx(tx *types.Transaction, from common.Address, opts *Validat
 // is valid according to the pool's internal state checks (balance, nonce, gaps).
 //
 // This check is public to allow different transaction pools to check the stateful
-// rules without duplicating code and running the risk of missed updates.
+// ValidateTransactionWithState performs stateful validation of a transaction against the current account state and pool constraints.
+//
+// It checks that the transaction nonce is valid and does not create gaps, verifies sufficient account balance for transaction costs (including queued transactions and replacements), and enforces per-account transaction slot limits if configured. For gasless transactions, it delegates to gasless-specific validation and skips balance checks.
+//
+// Returns an error if the transaction fails any stateful validation rule.
 func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, opts *ValidationOptionsWithState) error {
 	// Ensure the transaction adheres to nonce ordering
 	from, err := types.Sender(signer, tx) // already validated (and cached), but cleaner to check
