@@ -1982,4 +1982,5 @@ func (pool *LegacyPool) Clear() {
 	pool.pending = make(map[common.Address]*list)
 	pool.queue = make(map[common.Address]*list)
 	pool.pendingNonces = newNoncer(pool.currentState)
+	pool.pendingCreditUsage = make(map[common.Address]*big.Int)
 }
