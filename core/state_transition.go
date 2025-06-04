@@ -665,12 +665,29 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 		}, nil
 	}
 
+	// Compute refund counter, capped to a refund quotient.
+	gasRefund := st.calcRefund()
+	st.gasRemaining += gasRefund
+	if rules.IsPrague {
+		// After EIP-7623: Data-heavy transactions pay the floor gas.
+		if st.gasUsed() < floorDataGas {
+			prev := st.gasRemaining
+			st.gasRemaining = st.initialGas - floorDataGas
+			if t := st.evm.Config.Tracer; t != nil && t.OnGasChange != nil {
+				t.OnGasChange(prev, st.gasRemaining, tracing.GasChangeTxDataFloor)
+			}
+		}
+	}
+	st.returnGas()
+
+	// Handle gasless transaction credit deduction AFTER refunds are applied
 	if msg.IsGaslessTx {
 		// Calculate GasStation storage slots
 		gasStationStorageSlots := CalculateGasStationSlots(*msg.To)
 		availableCredits := st.state.GetState(params.GasStationAddress, gasStationStorageSlots.CreditSlotHash)
 
 		// Convert credits (Hash) and tx gas (uint64) to big.Int for comparison
+		// Use the final gas used amount (after refunds are applied)
 		availableCreditsBig := new(big.Int).SetBytes(availableCredits.Bytes())
 		txRequiredCreditsBig := new(big.Int).SetUint64(st.gasUsed())
 
@@ -699,21 +716,6 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 			),
 		})
 	}
-
-	// Compute refund counter, capped to a refund quotient.
-	gasRefund := st.calcRefund()
-	st.gasRemaining += gasRefund
-	if rules.IsPrague {
-		// After EIP-7623: Data-heavy transactions pay the floor gas.
-		if st.gasUsed() < floorDataGas {
-			prev := st.gasRemaining
-			st.gasRemaining = st.initialGas - floorDataGas
-			if t := st.evm.Config.Tracer; t != nil && t.OnGasChange != nil {
-				t.OnGasChange(prev, st.gasRemaining, tracing.GasChangeTxDataFloor)
-			}
-		}
-	}
-	st.returnGas()
 
 	// OP-Stack: Note for deposit tx there is no ETH refunded for unused gas, but that's taken care of by the fact that gasPrice
 	// is always 0 for deposit tx. So calling refundGas will ensure the gasUsed accounting is correct without actually
