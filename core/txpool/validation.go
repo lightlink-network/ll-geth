@@ -27,7 +27,6 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -261,38 +260,10 @@ type ValidationOptionsWithState struct {
 }
 
 func validateGaslessTx(tx *types.Transaction, from common.Address, opts *ValidationOptionsWithState) error {
-	if tx.To() == nil {
-		return fmt.Errorf("gasless txn must have a valid to address")
-	}
-
-	// Calculate GasStation storage slots
-	gasStationStorageSlots := core.CalculateGasStationSlots(*tx.To())
-
-	// Get the storage for the GaslessContract struct for the given address
-	storageBaseSlot := opts.State.GetState(params.GasStationAddress, gasStationStorageSlots.StructBaseSlotHash)
-
-	// Extract the registered and active bytes from the storage slot
-	isRegistered := storageBaseSlot[31] == 0x01
-	isActive := storageBaseSlot[30] == 0x01
-
-	if !isRegistered {
-		return fmt.Errorf("gasless transaction to unregistered address")
-	}
-
-	if !isActive {
-		return fmt.Errorf("gasless transaction to inactive address")
-	}
-
-	// Get the available credits from the credits storage slot in the GasStation contract for the given address
-	availableCredits := opts.State.GetState(params.GasStationAddress, gasStationStorageSlots.CreditSlotHash)
-
-	// Convert credits (Hash) and tx gas (uint64) to big.Int for comparison
-	availableCreditsBig := new(big.Int).SetBytes(availableCredits.Bytes())
-	txRequiredCreditsBig := new(big.Int).SetUint64(tx.Gas())
-
-	// Check if contract has enough available credits to cover the cost of the tx
-	if availableCreditsBig.Cmp(txRequiredCreditsBig) < 0 {
-		return fmt.Errorf("gasless transaction has insufficient credits: have %v, need %v", availableCreditsBig, txRequiredCreditsBig)
+	// Validate the gasless transaction
+	availableCredits, txRequiredCredits, _, err := core.ValidateGaslessTx(tx.To(), from, tx.Gas(), opts.State)
+	if err != nil {
+		return err
 	}
 
 	// Check if the contract has enough available credits to cover the cost of the tx
@@ -303,35 +274,10 @@ func validateGaslessTx(tx *types.Transaction, from common.Address, opts *Validat
 		// If there's positive pending credit usage, an additional check is needed
 		if pendingCreditUsage != nil && pendingCreditUsage.Sign() > 0 {
 			// Calculate total credits needed only if there's positive pending usage.
-			totalRequiredCreditsWithPending := new(big.Int).Add(txRequiredCreditsBig, pendingCreditUsage)
-			if availableCreditsBig.Cmp(totalRequiredCreditsWithPending) < 0 {
-				return fmt.Errorf("gasless contract has insufficient credits (including pending): pendingCreditUsage %v, txCreditsRequired %v, availableCredits %v", pendingCreditUsage, txRequiredCreditsBig, availableCreditsBig)
+			totalRequiredCreditsWithPending := new(big.Int).Add(txRequiredCredits, pendingCreditUsage)
+			if availableCredits.Cmp(totalRequiredCreditsWithPending) < 0 {
+				return fmt.Errorf("gasless contract has insufficient credits (including pending): pendingCreditUsage %v, txCreditsRequired %v, availableCredits %v", pendingCreditUsage, txRequiredCredits, availableCredits)
 			}
-		}
-	}
-
-	// Get the whitelist enabled slot
-	whitelistEnabled := opts.State.GetState(params.GasStationAddress, gasStationStorageSlots.WhitelistEnabledSlotHash)
-
-	// Get the whitelist enabled byte from the whitelist enabled slot
-	isWhitelistEnabled := whitelistEnabled[31] == 0x01
-
-	if isWhitelistEnabled {
-		// Calculate slot for the specific user in the nested whitelist map
-		userKeyPadded := common.LeftPadBytes(from.Bytes(), 32)
-		mapBaseSlotPadded := common.LeftPadBytes(gasStationStorageSlots.NestedWhitelistMapBaseSlotHash.Bytes(), 32)
-		userCombined := append(userKeyPadded, mapBaseSlotPadded...)
-		userWhitelistSlotHash := crypto.Keccak256Hash(userCombined)
-
-		// Get the whitelist status for the specific user
-		userWhitelist := opts.State.GetState(params.GasStationAddress, userWhitelistSlotHash)
-
-		// Check if the user is whitelisted
-		userWhitelistByte := userWhitelist[31]
-		isUserWhitelistStorage := userWhitelistByte == 0x01
-
-		if !isUserWhitelistStorage {
-			return fmt.Errorf("gasless transaction to non-whitelisted address")
 		}
 	}
 
