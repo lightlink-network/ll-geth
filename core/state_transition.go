@@ -22,6 +22,7 @@ import (
 	"math"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
@@ -378,6 +379,12 @@ func (st *stateTransition) preCheck() error {
 
 	// Give EVM gas for free if gasless txn
 	if st.msg.IsGaslessTx {
+		// Validate gasless transaction requirements first
+		_, _, _, err := ValidateGaslessTx(st.msg.To, st.msg.From, st.msg.GasLimit, st.state.(*state.StateDB))
+		if err != nil {
+			return err
+		}
+
 		st.initialGas = st.msg.GasLimit
 		st.gasRemaining += st.msg.GasLimit
 		return st.gp.SubGas(st.msg.GasLimit)
@@ -642,29 +649,44 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 
 	// Handle gasless transaction credit deduction AFTER refunds are applied
 	if msg.IsGaslessTx {
-		availableCredits, txRequiredCredits, gasStationStorageSlots, err := ValidateGaslessTx(msg.To, msg.From, msg.GasLimit, st.state.(*state.StateDB))
-		if err != nil {
-			return &ExecutionResult{
-				UsedGas:    st.gasUsed(),
-				Err:        err,
-				ReturnData: ret,
-			}, nil
-		}
+		// Calculate GasStation storage slots (validation already done in preCheck)
+		gasStationStorageSlots := CalculateGasStationSlots(*msg.To)
+		availableCredits := st.state.GetState(params.GasStationAddress, gasStationStorageSlots.CreditSlotHash)
+
+		// Convert credits (Hash) and tx gas (uint64) to big.Int for comparison
+		// Use the final gas used amount (after refunds are applied)
+		availableCreditsBig := new(big.Int).SetBytes(availableCredits.Bytes())
+		txRequiredCreditsBig := new(big.Int).SetUint64(st.gasUsed())
 
 		// Deduct the credits from the contract state directly
-		st.state.SetState(params.GasStationAddress, gasStationStorageSlots.CreditSlotHash, common.BigToHash(new(big.Int).Sub(availableCredits, txRequiredCredits)))
+		st.state.SetState(params.GasStationAddress, gasStationStorageSlots.CreditSlotHash, common.BigToHash(new(big.Int).Sub(availableCreditsBig, txRequiredCreditsBig)))
 
 		// Emit CreditsUsed event: CreditsUsed(address indexed contractAddress, address caller, uint256 gasUsed)
+		// Create ABI arguments for non-indexed parameters
+		addressType, _ := abi.NewType("address", "", nil)
+		uint256Type, _ := abi.NewType("uint256", "", nil)
+		arguments := abi.Arguments{
+			{Type: addressType}, // caller (not indexed)
+			{Type: uint256Type}, // gasUsed (not indexed)
+		}
+
+		// ABI encode the non-indexed data
+		data, err := arguments.Pack(st.msg.From, big.NewInt(int64(st.gasUsed())))
+		if err != nil {
+			// Fallback to manual encoding if ABI encoding fails
+			data = append(
+				common.LeftPadBytes(st.msg.From.Bytes(), 32),
+				common.LeftPadBytes(big.NewInt(int64(st.gasUsed())).Bytes(), 32)...,
+			)
+		}
+
 		st.state.AddLog(&types.Log{
 			Address: params.GasStationAddress,
 			Topics: []common.Hash{
 				crypto.Keccak256Hash([]byte("CreditsUsed(address,address,uint256)")), // Event signature
 				common.BytesToHash(st.msg.To.Bytes()),                                // contractAddress (indexed)
 			},
-			Data: append(
-				common.LeftPadBytes(st.msg.From.Bytes(), 32),                        // caller (not indexed)
-				common.LeftPadBytes(big.NewInt(int64(st.gasUsed())).Bytes(), 32)..., // gasUsed (not indexed)
-			),
+			Data: data,
 		})
 	}
 
