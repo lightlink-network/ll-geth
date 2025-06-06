@@ -138,10 +138,7 @@ func ValidateGaslessTx(to *common.Address, from common.Address, gasLimit uint64,
 
 	if isWhitelistEnabled {
 		// Calculate slot for the specific user in the nested whitelist map
-		userKeyPadded := common.LeftPadBytes(from.Bytes(), 32)
-		mapBaseSlotPadded := common.LeftPadBytes(gasStationStorageSlots.NestedWhitelistMapBaseSlotHash.Bytes(), 32)
-		userCombined := append(userKeyPadded, mapBaseSlotPadded...)
-		userWhitelistSlotHash := crypto.Keccak256Hash(userCombined)
+		userWhitelistSlotHash := calculateNestedMappingSlot(from, gasStationStorageSlots.NestedWhitelistMapBaseSlotHash)
 
 		// Get the whitelist status for the specific user
 		userWhitelist := sdb.GetState(params.GasStationAddress, userWhitelistSlotHash)
@@ -161,10 +158,7 @@ func ValidateGaslessTx(to *common.Address, from common.Address, gasLimit uint64,
 
 	if isSingleUseEnabled {
 		// Calculate slot for the specific user in the nested usedAddresses map
-		userKeyPadded := common.LeftPadBytes(from.Bytes(), 32)
-		mapBaseSlotPadded := common.LeftPadBytes(gasStationStorageSlots.UsedAddressesMapBaseSlotHash.Bytes(), 32)
-		userCombined := append(userKeyPadded, mapBaseSlotPadded...)
-		userUsedSlotHash := crypto.Keccak256Hash(userCombined)
+		userUsedSlotHash := calculateNestedMappingSlot(from, gasStationStorageSlots.UsedAddressesMapBaseSlotHash)
 
 		// Get the used status for the specific user
 		userUsed := sdb.GetState(params.GasStationAddress, userUsedSlotHash)
@@ -178,4 +172,12 @@ func ValidateGaslessTx(to *common.Address, from common.Address, gasLimit uint64,
 	}
 
 	return availableCreditsBig, txRequiredCreditsBig, &gasStationStorageSlots, nil
+}
+
+// calculateNestedMappingSlot computes the storage slot hash for a nested mapping
+func calculateNestedMappingSlot(key common.Address, baseSlot common.Hash) common.Hash {
+	keyPadded := common.LeftPadBytes(key.Bytes(), 32)
+	mapBaseSlotPadded := common.LeftPadBytes(baseSlot.Bytes(), 32)
+	combined := append(keyPadded, mapBaseSlotPadded...)
+	return crypto.Keccak256Hash(combined)
 }
