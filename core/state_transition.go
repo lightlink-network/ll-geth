@@ -22,7 +22,6 @@ import (
 	"math"
 	"math/big"
 
-	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -656,21 +655,19 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 		availableCreditsBig := new(big.Int).SetBytes(availableCredits.Bytes())
 		txRequiredCreditsBig := new(big.Int).SetUint64(st.gasUsed())
 
-		// Deduct the credits from the contract state directly
-		st.state.SetState(params.GasStationAddress, gasStationStorageSlots.CreditSlotHash, common.BigToHash(new(big.Int).Sub(availableCreditsBig, txRequiredCreditsBig)))
-
-		// Emit CreditsUsed event: CreditsUsed(address indexed contractAddress, address caller, uint256 gasUsed)
-		// Create ABI arguments for non-indexed parameters
-		addressType, _ := abi.NewType("address", "", nil)
-		uint256Type, _ := abi.NewType("uint256", "", nil)
-		arguments := abi.Arguments{
-			{Type: addressType}, // caller (not indexed)
-			{Type: uint256Type}, // gasUsed (not indexed)
+		// Calculate the new credits after the transaction
+		newCredits := new(big.Int).Sub(availableCreditsBig, txRequiredCreditsBig)
+		if newCredits.Sign() < 0 {
+			// Safety net – should never happen but avoids corrupting state
+			newCredits = big.NewInt(0)
 		}
+
+		// Deduct the credits from the contract state directly
+		st.state.SetState(params.GasStationAddress, gasStationStorageSlots.CreditSlotHash, common.BigToHash(newCredits))
 
 		// ABI encode the non-indexed data
 		gasUsedBig := new(big.Int).SetUint64(st.gasUsed())
-		data, err := arguments.Pack(st.msg.From, gasUsedBig)
+		data, err := CreditsUsedEventArgs.Pack(st.msg.From, gasUsedBig)
 		if err != nil {
 			// Fallback to manual encoding if ABI encoding fails
 			data = append(

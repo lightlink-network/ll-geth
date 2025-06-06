@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
@@ -11,6 +12,17 @@ import (
 
 // Event signature
 var CreditsUsedEventSignature = crypto.Keccak256Hash([]byte("CreditsUsed(address,address,uint256)"))
+
+var (
+	addressType, _ = abi.NewType("address", "", nil)
+	uint256Type, _ = abi.NewType("uint256", "", nil)
+
+	// Pre-built arguments for CreditsUsed event
+	CreditsUsedEventArgs = abi.Arguments{
+		{Type: addressType}, // caller (not indexed)
+		{Type: uint256Type}, // gasUsed (not indexed)
+	}
+)
 
 // StateReader defines the minimal interface needed for gasless transaction validation
 // This allows ValidateGaslessTx to work with any state implementation that can read storage
