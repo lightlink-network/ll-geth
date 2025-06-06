@@ -668,22 +668,16 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 		// ABI encode the non-indexed data
 		gasUsedBig := new(big.Int).SetUint64(st.gasUsed())
 		data, err := CreditsUsedEventArgs.Pack(st.msg.From, gasUsedBig)
-		if err != nil {
-			// Fallback to manual encoding if ABI encoding fails
-			data = append(
-				common.LeftPadBytes(st.msg.From.Bytes(), 32),
-				common.LeftPadBytes(big.NewInt(int64(st.gasUsed())).Bytes(), 32)...,
-			)
+		if err == nil {
+			st.state.AddLog(&types.Log{
+				Address: params.GasStationAddress,
+				Topics: []common.Hash{
+					CreditsUsedEventSignature,
+					common.BytesToHash(st.msg.To.Bytes()), // contractAddress (indexed)
+				},
+				Data: data,
+			})
 		}
-
-		st.state.AddLog(&types.Log{
-			Address: params.GasStationAddress,
-			Topics: []common.Hash{
-				CreditsUsedEventSignature,
-				common.BytesToHash(st.msg.To.Bytes()), // contractAddress (indexed)
-			},
-			Data: data,
-		})
 	}
 
 	// OP-Stack: Note for deposit tx there is no ETH refunded for unused gas, but that's taken care of by the fact that gasPrice
