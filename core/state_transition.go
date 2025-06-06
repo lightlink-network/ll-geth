@@ -24,7 +24,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
@@ -380,7 +379,7 @@ func (st *stateTransition) preCheck() error {
 	// Give EVM gas for free if gasless txn
 	if st.msg.IsGaslessTx {
 		// Validate gasless transaction requirements first
-		_, _, _, err := ValidateGaslessTx(st.msg.To, st.msg.From, st.msg.GasLimit, st.state.(*state.StateDB))
+		_, _, _, err := ValidateGaslessTx(st.msg.To, st.msg.From, st.msg.GasLimit, st.state)
 		if err != nil {
 			return err
 		}

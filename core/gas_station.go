@@ -5,10 +5,15 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
 )
+
+// StateReader defines the minimal interface needed for gasless transaction validation
+// This allows ValidateGaslessTx to work with any state implementation that can read storage
+type StateReader interface {
+	GetState(addr common.Address, hash common.Hash) common.Hash
+}
 
 // GasStation struct storage slots structs
 type GasStationStorageSlots struct {
@@ -59,7 +64,7 @@ func CalculateGasStationSlots(registeredContractAddress common.Address) GasStati
 	return gasStationStorageSlots
 }
 
-func ValidateGaslessTx(to *common.Address, from common.Address, gasLimit uint64, sdb *state.StateDB) (*big.Int, *big.Int, *GasStationStorageSlots, error) {
+func ValidateGaslessTx(to *common.Address, from common.Address, gasLimit uint64, sdb StateReader) (*big.Int, *big.Int, *GasStationStorageSlots, error) {
 	if to == nil {
 		return nil, nil, nil, fmt.Errorf("gasless txn must have a valid to address")
 	}
