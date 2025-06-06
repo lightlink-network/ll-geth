@@ -9,6 +9,9 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 )
 
+// Event signature
+var CreditsUsedEventSignature = crypto.Keccak256Hash([]byte("CreditsUsed(address,address,uint256)"))
+
 // StateReader defines the minimal interface needed for gasless transaction validation
 // This allows ValidateGaslessTx to work with any state implementation that can read storage
 type StateReader interface {

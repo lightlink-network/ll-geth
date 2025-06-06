@@ -27,7 +27,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/holiman/uint256"
@@ -683,8 +682,8 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 		st.state.AddLog(&types.Log{
 			Address: params.GasStationAddress,
 			Topics: []common.Hash{
-				crypto.Keccak256Hash([]byte("CreditsUsed(address,address,uint256)")), // Event signature
-				common.BytesToHash(st.msg.To.Bytes()),                                // contractAddress (indexed)
+				CreditsUsedEventSignature,
+				common.BytesToHash(st.msg.To.Bytes()), // contractAddress (indexed)
 			},
 			Data: data,
 		})
