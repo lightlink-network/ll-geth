@@ -46,7 +46,8 @@ func CalculateGasStationSlots(registeredContractAddress common.Address) GasStati
 	gasStationStorageSlots := GasStationStorageSlots{}
 
 	// ERC-7201 storage location for GasStationStorage
-	// bytes32 private constant GasStationStorageLocation = 0xc2eaf2cedf9e23687c6eb7c4717aa3eacbd015cc86eaad3f51aae2d3c955db00;
+	// bytes32 private constant GasStationStorageLocation = keccak256(abi.encode(uint256(keccak256("gasstation.storage")) - 1)) & ~bytes32(uint256(0xff));
+	// Computed value: 0xc2eaf2cedf9e23687c6eb7c4717aa3eacbd015cc86eaad3f51aae2d3c955db00
 	gasStationStorageLocation := common.HexToHash("0xc2eaf2cedf9e23687c6eb7c4717aa3eacbd015cc86eaad3f51aae2d3c955db00")
 
 	// The 'contracts' mapping is at offset 1 from the storage location
