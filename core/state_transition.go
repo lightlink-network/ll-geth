@@ -670,7 +670,8 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 		}
 
 		// ABI encode the non-indexed data
-		data, err := arguments.Pack(st.msg.From, big.NewInt(int64(st.gasUsed())))
+		gasUsedBig := new(big.Int).SetUint64(st.gasUsed())
+		data, err := arguments.Pack(st.msg.From, gasUsedBig)
 		if err != nil {
 			// Fallback to manual encoding if ABI encoding fails
 			data = append(
