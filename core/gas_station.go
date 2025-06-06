@@ -36,6 +36,8 @@ type GasStationStorageSlots struct {
 	CreditSlotHash                 common.Hash
 	WhitelistEnabledSlotHash       common.Hash
 	NestedWhitelistMapBaseSlotHash common.Hash
+	SingleUseEnabledSlotHash       common.Hash
+	UsedAddressesMapBaseSlotHash   common.Hash
 }
 
 // calculateGasStationSlots computes the storage slot hashes for a specific
@@ -63,6 +65,7 @@ func CalculateGasStationSlots(registeredContractAddress common.Address) GasStati
 	// Calculate subsequent slots by adding offsets to the base slot hash
 	// New struct layout: bool registered, bool active, address admin (all packed in slot 0)
 	// uint256 credits (slot 1), bool whitelistEnabled (slot 2), mapping whitelist (slot 3)
+	// bool singleUseEnabled (slot 4), mapping usedAddresses (slot 5)
 	structBaseSlotBig := gasStationStorageSlots.StructBaseSlotHash.Big()
 
 	// Slot for 'credits' (offset 1 from base - after the packed bools and address)
@@ -76,6 +79,14 @@ func CalculateGasStationSlots(registeredContractAddress common.Address) GasStati
 	// Base slot for the nested 'whitelist' mapping (offset 3 from base)
 	nestedWhitelistMapBaseSlotBig := new(big.Int).Add(structBaseSlotBig, big.NewInt(3))
 	gasStationStorageSlots.NestedWhitelistMapBaseSlotHash = common.BigToHash(nestedWhitelistMapBaseSlotBig)
+
+	// Slot for 'singleUseEnabled' (offset 4 from base)
+	singleUseEnabledSlotBig := new(big.Int).Add(structBaseSlotBig, big.NewInt(4))
+	gasStationStorageSlots.SingleUseEnabledSlotHash = common.BigToHash(singleUseEnabledSlotBig)
+
+	// Base slot for the nested 'usedAddresses' mapping (offset 5 from base)
+	usedAddressesMapBaseSlotBig := new(big.Int).Add(structBaseSlotBig, big.NewInt(5))
+	gasStationStorageSlots.UsedAddressesMapBaseSlotHash = common.BigToHash(usedAddressesMapBaseSlotBig)
 
 	return gasStationStorageSlots
 }
@@ -141,6 +152,28 @@ func ValidateGaslessTx(to *common.Address, from common.Address, gasLimit uint64,
 
 		if !isUserWhitelistStorage {
 			return nil, nil, nil, fmt.Errorf("gasless transaction to non-whitelisted address")
+		}
+	}
+
+	// Check single-use mode if enabled
+	singleUseEnabled := sdb.GetState(params.GasStationAddress, gasStationStorageSlots.SingleUseEnabledSlotHash)
+	isSingleUseEnabled := singleUseEnabled[31] == 0x01
+
+	if isSingleUseEnabled {
+		// Calculate slot for the specific user in the nested usedAddresses map
+		userKeyPadded := common.LeftPadBytes(from.Bytes(), 32)
+		mapBaseSlotPadded := common.LeftPadBytes(gasStationStorageSlots.UsedAddressesMapBaseSlotHash.Bytes(), 32)
+		userCombined := append(userKeyPadded, mapBaseSlotPadded...)
+		userUsedSlotHash := crypto.Keccak256Hash(userCombined)
+
+		// Get the used status for the specific user
+		userUsed := sdb.GetState(params.GasStationAddress, userUsedSlotHash)
+
+		// Check if the user has already used gasless transactions
+		isUserAlreadyUsed := userUsed[31] == 0x01
+
+		if isUserAlreadyUsed {
+			return nil, nil, nil, fmt.Errorf("gasless transaction from address that has already used single-use gasless functionality")
 		}
 	}
 

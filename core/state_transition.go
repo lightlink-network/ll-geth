@@ -26,6 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/holiman/uint256"
@@ -664,6 +665,21 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 
 		// Deduct the credits from the contract state directly
 		st.state.SetState(params.GasStationAddress, gasStationStorageSlots.CreditSlotHash, common.BigToHash(newCredits))
+
+		// Mark address as used if single-use mode is enabled
+		singleUseEnabled := st.state.GetState(params.GasStationAddress, gasStationStorageSlots.SingleUseEnabledSlotHash)
+		isSingleUseEnabled := singleUseEnabled[31] == 0x01
+
+		if isSingleUseEnabled {
+			// Calculate slot for the specific user in the nested usedAddresses map
+			userKeyPadded := common.LeftPadBytes(st.msg.From.Bytes(), 32)
+			mapBaseSlotPadded := common.LeftPadBytes(gasStationStorageSlots.UsedAddressesMapBaseSlotHash.Bytes(), 32)
+			userCombined := append(userKeyPadded, mapBaseSlotPadded...)
+			userUsedSlotHash := crypto.Keccak256Hash(userCombined)
+
+			// Mark the user as having used gasless transactions
+			st.state.SetState(params.GasStationAddress, userUsedSlotHash, common.HexToHash("0x01"))
+		}
 
 		// ABI encode the non-indexed data
 		gasUsedBig := new(big.Int).SetUint64(st.gasUsed())
