@@ -84,6 +84,10 @@ func ValidateGaslessTx(to *common.Address, from common.Address, gasLimit uint64,
 		return nil, nil, nil, fmt.Errorf("gasless txn must have a valid to address")
 	}
 
+	if gasLimit == 0 {
+		return nil, nil, nil, fmt.Errorf("gasless txn must have a non-zero gas limit")
+	}
+
 	// Calculate GasStation storage slots
 	gasStationStorageSlots := CalculateGasStationSlots(*to)
 
