@@ -1362,7 +1362,7 @@ func testEIP155Transition(t *testing.T, scheme string) {
 			tx      *types.Transaction
 			err     error
 			basicTx = func(signer types.Signer) (*types.Transaction, error) {
-				return types.SignTx(types.NewTransaction(block.TxNonce(address), common.Address{}, new(big.Int), 21000, new(big.Int), nil), signer, key)
+				return types.SignTx(types.NewTransaction(block.TxNonce(address), common.Address{}, new(big.Int), 21000, big.NewInt(1), nil), signer, key)
 			}
 		)
 		switch i {
@@ -1433,7 +1433,7 @@ func testEIP155Transition(t *testing.T, scheme string) {
 			tx      *types.Transaction
 			err     error
 			basicTx = func(signer types.Signer) (*types.Transaction, error) {
-				return types.SignTx(types.NewTransaction(block.TxNonce(address), common.Address{}, new(big.Int), 21000, new(big.Int), nil), signer, key)
+				return types.SignTx(types.NewTransaction(block.TxNonce(address), common.Address{}, new(big.Int), 21000, big.NewInt(1), nil), signer, key)
 			}
 		)
 		if i == 0 {
