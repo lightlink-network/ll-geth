@@ -62,6 +62,9 @@ func testTransactionPriceNonceSort(t *testing.T, baseFee *big.Int) {
 		for i := 0; i < 25; i++ {
 			var tx *types.Transaction
 			gasFeeCap := rand.Intn(50)
+			if gasFeeCap == 0 {
+				gasFeeCap = 1
+			}
 			if baseFee == nil {
 				tx = types.NewTx(&types.LegacyTx{
 					Nonce:    uint64(start + i),
