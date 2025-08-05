@@ -218,7 +218,20 @@ func TransactionToMessage(tx *types.Transaction, s types.Signer, baseFee *big.In
 // state and would never be accepted within a block.
 func ApplyMessage(evm *vm.EVM, msg *Message, gp *GasPool) (*ExecutionResult, error) {
 	evm.SetTxContext(NewEVMTxContext(msg))
-	return newStateTransition(evm, msg, gp).execute()
+
+	// Pre-validate gasless transaction before gas metering starts
+	var gasStationStorageSlots *GasStationStorageSlots
+	if msg.IsGaslessTx {
+		_, _, slots, err := ValidateGaslessTx(msg.To, msg.From, msg.GasLimit, evm.StateDB)
+		if err != nil {
+			return nil, err
+		}
+		gasStationStorageSlots = slots
+	}
+
+	st := newStateTransition(evm, msg, gp)
+	st.gasStationStorageSlots = gasStationStorageSlots
+	return st.execute()
 }
 
 // stateTransition represents a state transition.
@@ -244,12 +257,13 @@ func ApplyMessage(evm *vm.EVM, msg *Message, gp *GasPool) (*ExecutionResult, err
 //  5. Run Script section
 //  6. Derive new state root
 type stateTransition struct {
-	gp           *GasPool
-	msg          *Message
-	gasRemaining uint64
-	initialGas   uint64
-	state        vm.StateDB
-	evm          *vm.EVM
+	gp                     *GasPool
+	msg                    *Message
+	gasRemaining           uint64
+	initialGas             uint64
+	state                  vm.StateDB
+	evm                    *vm.EVM
+	gasStationStorageSlots *GasStationStorageSlots
 }
 
 // newStateTransition initialises and returns a new state transition object.
@@ -377,12 +391,6 @@ func (st *stateTransition) preCheck() error {
 
 	// Give EVM gas for free if gasless txn
 	if st.msg.IsGaslessTx {
-		// Validate gasless transaction requirements first
-		_, _, _, err := ValidateGaslessTx(st.msg.To, st.msg.From, st.msg.GasLimit, st.state)
-		if err != nil {
-			return err
-		}
-
 		st.initialGas = st.msg.GasLimit
 		st.gasRemaining += st.msg.GasLimit
 		return st.gp.SubGas(st.msg.GasLimit)
@@ -646,54 +654,8 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 	st.returnGas()
 
 	// Handle gasless transaction credit deduction AFTER refunds are applied
-	if msg.IsGaslessTx {
-		// Calculate GasStation storage slots (validation already done in preCheck)
-		gasStationStorageSlots := CalculateGasStationSlots(*msg.To)
-		availableCredits := st.state.GetState(params.GasStationAddress, gasStationStorageSlots.CreditSlotHash)
-
-		// Convert credits (Hash) and tx gas (uint64) to big.Int for comparison
-		// Use the final gas used amount (after refunds are applied)
-		availableCreditsBig := new(big.Int).SetBytes(availableCredits.Bytes())
-		txRequiredCreditsBig := new(big.Int).SetUint64(st.gasUsed())
-
-		// Calculate the new credits after the transaction
-		newCredits := new(big.Int).Sub(availableCreditsBig, txRequiredCreditsBig)
-		if newCredits.Sign() < 0 {
-			// Safety net – should never happen but avoids corrupting state
-			newCredits = big.NewInt(0)
-		}
-
-		// Deduct the credits from the contract state directly
-		st.state.SetState(params.GasStationAddress, gasStationStorageSlots.CreditSlotHash, common.BigToHash(newCredits))
-
-		// Mark address as used if single-use mode is enabled
-		singleUseEnabled := st.state.GetState(params.GasStationAddress, gasStationStorageSlots.SingleUseEnabledSlotHash)
-		isSingleUseEnabled := singleUseEnabled[31] == 0x01
-
-		if isSingleUseEnabled {
-			// Calculate slot for the specific user in the nested usedAddresses map
-			userKeyPadded := common.LeftPadBytes(st.msg.From.Bytes(), 32)
-			mapBaseSlotPadded := common.LeftPadBytes(gasStationStorageSlots.UsedAddressesMapBaseSlotHash.Bytes(), 32)
-			userCombined := append(userKeyPadded, mapBaseSlotPadded...)
-			userUsedSlotHash := crypto.Keccak256Hash(userCombined)
-
-			// Mark the user as having used gasless transactions
-			st.state.SetState(params.GasStationAddress, userUsedSlotHash, common.HexToHash("0x01"))
-		}
-
-		// ABI encode the non-indexed data
-		gasUsedBig := new(big.Int).SetUint64(st.gasUsed())
-		data, err := CreditsUsedEventArgs.Pack(st.msg.From, gasUsedBig)
-		if err == nil {
-			st.state.AddLog(&types.Log{
-				Address: params.GasStationAddress,
-				Topics: []common.Hash{
-					CreditsUsedEventSignature,
-					common.BytesToHash(st.msg.To.Bytes()), // contractAddress (indexed)
-				},
-				Data: data,
-			})
-		}
+	if msg.IsGaslessTx && st.gasStationStorageSlots != nil {
+		st.handleGaslessPostExecution()
 	}
 
 	// OP-Stack: Note for deposit tx there is no ETH refunded for unused gas, but that's taken care of by the fact that gasPrice
@@ -879,4 +841,54 @@ func (st *stateTransition) gasUsed() uint64 {
 // blobGasUsed returns the amount of blob gas used by the message.
 func (st *stateTransition) blobGasUsed() uint64 {
 	return uint64(len(st.msg.BlobHashes) * params.BlobTxBlobGasPerBlob)
+}
+
+// handleGaslessPostExecution handles credit deduction and state updates for gasless transactions
+// This method is called OUTSIDE of gas metering to avoid affecting gas usage
+func (st *stateTransition) handleGaslessPostExecution() {
+	slots := st.gasStationStorageSlots
+
+	// Read current credits and deduct gas used
+	availableCredits := st.state.GetState(params.GasStationAddress, slots.CreditSlotHash)
+	availableCreditsBig := new(big.Int).SetBytes(availableCredits.Bytes())
+	txRequiredCreditsBig := new(big.Int).SetUint64(st.gasUsed())
+
+	// Calculate new credits after transaction
+	newCredits := new(big.Int).Sub(availableCreditsBig, txRequiredCreditsBig)
+	if newCredits.Sign() < 0 {
+		// Safety net – should never happen but avoids corrupting state
+		newCredits = big.NewInt(0)
+	}
+
+	// Update credit balance
+	st.state.SetState(params.GasStationAddress, slots.CreditSlotHash, common.BigToHash(newCredits))
+
+	// Handle single-use marking if enabled
+	singleUseEnabled := st.state.GetState(params.GasStationAddress, slots.SingleUseEnabledSlotHash)
+	isSingleUseEnabled := singleUseEnabled[31] == 0x01
+
+	if isSingleUseEnabled {
+		// Calculate slot for the specific user in the nested usedAddresses map
+		userKeyPadded := common.LeftPadBytes(st.msg.From.Bytes(), 32)
+		mapBaseSlotPadded := common.LeftPadBytes(slots.UsedAddressesMapBaseSlotHash.Bytes(), 32)
+		userCombined := append(userKeyPadded, mapBaseSlotPadded...)
+		userUsedSlotHash := crypto.Keccak256Hash(userCombined)
+
+		// Mark the user as having used gasless transactions
+		st.state.SetState(params.GasStationAddress, userUsedSlotHash, common.HexToHash("0x01"))
+	}
+
+	// Emit credits used event
+	gasUsedBig := new(big.Int).SetUint64(st.gasUsed())
+	data, err := CreditsUsedEventArgs.Pack(st.msg.From, gasUsedBig)
+	if err == nil {
+		st.state.AddLog(&types.Log{
+			Address: params.GasStationAddress,
+			Topics: []common.Hash{
+				CreditsUsedEventSignature,
+				common.BytesToHash(st.msg.To.Bytes()), // contractAddress (indexed)
+			},
+			Data: data,
+		})
+	}
 }
