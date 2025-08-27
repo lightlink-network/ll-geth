@@ -38,6 +38,11 @@ type txWithMinerFee struct {
 // Returns error in case of a negative effective miner gasTipCap.
 func newTxWithMinerFee(tx *txpool.LazyTransaction, from common.Address, baseFee *uint256.Int) (*txWithMinerFee, error) {
 	tip := new(uint256.Int).Set(tx.GasTipCap)
+	// This func is called on all pending txns in the txpool to set the order by fees
+	// Miner should not enforce baseFee for gasless txns
+	if tx.Tx.IsGaslessTx() {
+		baseFee = nil
+	}
 	if baseFee != nil {
 		if tx.GasFeeCap.Cmp(baseFee) < 0 {
 			return nil, types.ErrGasFeeCapTooLow

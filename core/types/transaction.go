@@ -97,6 +97,7 @@ type TxData interface {
 	nonce() uint64
 	to() *common.Address
 	isSystemTx() bool
+	isGaslessTx() bool
 
 	rawSignatureValues() (v, r, s *big.Int)
 	setSignatureValues(chainID, v, r, s *big.Int)
@@ -374,6 +375,11 @@ func (tx *Transaction) IsSystemTx() bool {
 	return tx.inner.isSystemTx()
 }
 
+// IsGasless returns true if the transaction is a gasless transaction.
+func (tx *Transaction) IsGaslessTx() bool {
+	return tx.inner.isGaslessTx()
+}
+
 // Cost returns (gas * gasPrice) + (blobGas * blobGasPrice) + value.
 func (tx *Transaction) Cost() *big.Int {
 	total := new(big.Int).Mul(tx.GasPrice(), new(big.Int).SetUint64(tx.Gas()))
@@ -386,6 +392,9 @@ func (tx *Transaction) Cost() *big.Int {
 
 // RollupCostData caches the information needed to efficiently compute the data availability fee
 func (tx *Transaction) RollupCostData() RollupCostData {
+	if tx.IsGaslessTx() {
+		return RollupCostData{}
+	}
 	if tx.Type() == DepositTxType {
 		return RollupCostData{}
 	}

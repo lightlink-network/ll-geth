@@ -160,8 +160,10 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 			return fmt.Errorf("%w: gas %v, minimum needed %v", core.ErrFloorDataGas, tx.Gas(), floorDataGas)
 		}
 	}
-	// Ensure the gasprice is high enough to cover the requirement of the calling pool
-	if tx.GasTipCapIntCmp(opts.MinTip) < 0 {
+	// Ensure the gasprice is high enough to cover the requirement of the calling pool (except for gasless txns)
+	// This means we can continue to enforce the minimum tip required for the miner for all non-gasless txns
+	// i.e. txns must either: 1. have a valid minimum tip/gasPrice or be a gasless txn
+	if tx.GasTipCapIntCmp(opts.MinTip) < 0 && !tx.IsGaslessTx() {
 		return fmt.Errorf("%w: gas tip cap %v, minimum needed %v", ErrUnderpriced, tx.GasTipCap(), opts.MinTip)
 	}
 	if tx.Type() == types.BlobTxType {
@@ -251,6 +253,35 @@ type ValidationOptionsWithState struct {
 
 	// RollupCostFn is an optional extension, to validate total rollup costs of a tx
 	RollupCostFn RollupCostFunc
+
+	// PendingCreditUsage is an optional callback to retrieve the total credits used for a specific contract
+	// i.e. the amount of credits that will be used when all pending transactions for a specific contract are processed
+	PendingCreditUsage func(contractAddr common.Address) *big.Int
+}
+
+func validateGaslessTx(tx *types.Transaction, from common.Address, opts *ValidationOptionsWithState) error {
+	// Validate the gasless transaction
+	availableCredits, txRequiredCredits, _, err := core.ValidateGaslessTx(tx.To(), from, tx.Gas(), opts.State)
+	if err != nil {
+		return err
+	}
+
+	// Check if the contract has enough available credits to cover the cost of the tx
+	// including any pending credit usage from queued mempool transactions
+	if opts.PendingCreditUsage != nil {
+		pendingCreditUsage := opts.PendingCreditUsage(*tx.To())
+
+		// If there's positive pending credit usage, an additional check is needed
+		if pendingCreditUsage != nil && pendingCreditUsage.Sign() > 0 {
+			// Calculate total credits needed only if there's positive pending usage.
+			totalRequiredCreditsWithPending := new(big.Int).Add(txRequiredCredits, pendingCreditUsage)
+			if availableCredits.Cmp(totalRequiredCreditsWithPending) < 0 {
+				return fmt.Errorf("gasless contract has insufficient credits (including pending): pendingCreditUsage %v, txCreditsRequired %v, availableCredits %v", pendingCreditUsage, txRequiredCredits, availableCredits)
+			}
+		}
+	}
+
+	return nil
 }
 
 // ValidateTransactionWithState is a helper method to check whether a transaction
@@ -276,6 +307,12 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 			return fmt.Errorf("%w: tx nonce %v, gapped nonce %v", core.ErrNonceTooHigh, tx.Nonce(), gap)
 		}
 	}
+
+	// If gasless txn, validate and skip balance check below
+	if tx.IsGaslessTx() {
+		return validateGaslessTx(tx, from, opts)
+	}
+
 	// Ensure the transactor has enough funds to cover the transaction costs
 	var (
 		balance           = opts.State.GetBalance(from).ToBig()

@@ -261,6 +261,8 @@ type LegacyPool struct {
 	changesSinceReorg int // A counter for how many drops we've performed in-between reorg.
 
 	rollupCostFn txpool.RollupCostFunc // Additional rollup cost function, optional field, may be nil.
+
+	pendingCreditUsage map[common.Address]*big.Int // Track total pending credits to be used per gasless contract
 }
 
 type txpoolResetRequest struct {
@@ -275,20 +277,21 @@ func New(config Config, chain BlockChain) *LegacyPool {
 
 	// Create the transaction pool with its initial settings
 	pool := &LegacyPool{
-		config:          config,
-		chain:           chain,
-		chainconfig:     chain.Config(),
-		signer:          types.LatestSigner(chain.Config()),
-		pending:         make(map[common.Address]*list),
-		queue:           make(map[common.Address]*list),
-		beats:           make(map[common.Address]time.Time),
-		all:             newLookup(),
-		reqResetCh:      make(chan *txpoolResetRequest),
-		reqPromoteCh:    make(chan *accountSet),
-		queueTxEventCh:  make(chan *types.Transaction),
-		reorgDoneCh:     make(chan chan struct{}),
-		reorgShutdownCh: make(chan struct{}),
-		initDoneCh:      make(chan struct{}),
+		config:             config,
+		chain:              chain,
+		chainconfig:        chain.Config(),
+		signer:             types.LatestSigner(chain.Config()),
+		pending:            make(map[common.Address]*list),
+		queue:              make(map[common.Address]*list),
+		beats:              make(map[common.Address]time.Time),
+		all:                newLookup(),
+		reqResetCh:         make(chan *txpoolResetRequest),
+		reqPromoteCh:       make(chan *accountSet),
+		queueTxEventCh:     make(chan *types.Transaction),
+		reorgDoneCh:        make(chan chan struct{}),
+		reorgShutdownCh:    make(chan struct{}),
+		initDoneCh:         make(chan struct{}),
+		pendingCreditUsage: make(map[common.Address]*big.Int),
 	}
 	pool.priced = newPricedList(pool.all)
 
@@ -564,6 +567,9 @@ func (pool *LegacyPool) Pending(filter txpool.PendingFilter) map[common.Address]
 		// If the miner requests tip enforcement, cap the lists now
 		if minTipBig != nil {
 			for i, tx := range txs {
+				if tx.IsGaslessTx() {
+					continue // skip gasless txns
+				}
 				if tx.EffectiveGasTipIntCmp(minTipBig, baseFeeBig) < 0 {
 					txs = txs[:i]
 					break
@@ -653,6 +659,9 @@ func (pool *LegacyPool) validateTx(tx *types.Transaction) error {
 			return nil
 		},
 		RollupCostFn: pool.rollupCostFn,
+		PendingCreditUsage: func(contractAddr common.Address) *big.Int {
+			return pool.pendingCreditUsage[contractAddr]
+		},
 	}
 	if err := txpool.ValidateTransactionWithState(tx, pool.signer, opts); err != nil {
 		return err
@@ -719,6 +728,25 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 	}
 	// already validated by this point
 	from, _ := types.Sender(pool.signer, tx)
+
+	// Increment the pending credit usage for the given contract address by the amount specified.
+	if tx.IsGaslessTx() && tx.To() != nil {
+		currentCreditUsage, found := pool.pendingCreditUsage[*tx.To()]
+		if !found {
+			// If the address is not in the map, initialize its credit usage with txGasValue.
+			// A new big.Int is created. If txGasValue is 0, an entry for 0 is created.
+			pool.pendingCreditUsage[*tx.To()] = new(big.Int).SetUint64(tx.Gas())
+		} else {
+			// If the address exists, add txGasValue to its current credit usage.
+			// Only perform the addition if txGasValue is greater than 0 to avoid
+			// unnecessary allocation and computation for adding zero.
+			if tx.Gas() > 0 {
+				gasToAdd := new(big.Int).SetUint64(tx.Gas())
+				// Add modifies currentCreditUsage in place.
+				currentCreditUsage.Add(currentCreditUsage, gasToAdd)
+			}
+		}
+	}
 
 	// If the address is not yet known, request exclusivity to track the account
 	// only by this subpool until all transactions are evicted
@@ -1093,6 +1121,25 @@ func (pool *LegacyPool) removeTx(hash common.Hash, outofbound bool, unreserve bo
 		return 0
 	}
 	addr, _ := types.Sender(pool.signer, tx) // already validated during insertion
+
+	// Decrement pending usage when a tx is removed from the pool
+	if tx.IsGaslessTx() && tx.To() != nil {
+		currentCreditUsage, found := pool.pendingCreditUsage[*tx.To()]
+		if found {
+			// If the address exists, subtract txGasValue from its current credit usage.
+			// Only perform the subtraction if txGasValue is greater than 0 to avoid
+			// unnecessary allocation and computation for subtracting zero.
+			if tx.Gas() > 0 {
+				gasToSubtract := new(big.Int).SetUint64(tx.Gas())
+				// Subtract modifies currentCreditUsage in place.
+				currentCreditUsage.Sub(currentCreditUsage, gasToSubtract)
+				// If negative, set to 0
+				if currentCreditUsage.Sign() < 0 {
+					currentCreditUsage.SetUint64(0)
+				}
+			}
+		}
+	}
 
 	// If after deletion there are no more transactions belonging to this account,
 	// relinquish the address reservation. It's a bit convoluted do this, via a
@@ -1935,4 +1982,5 @@ func (pool *LegacyPool) Clear() {
 	pool.pending = make(map[common.Address]*list)
 	pool.queue = make(map[common.Address]*list)
 	pool.pendingNonces = newNoncer(pool.currentState)
+	pool.pendingCreditUsage = make(map[common.Address]*big.Int)
 }

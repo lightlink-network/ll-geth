@@ -44,8 +44,8 @@ func TestBedrockL1CostFunc(t *testing.T) {
 	costFunc0 := newL1CostFuncBedrockHelper(baseFee, overhead, scalar, false /*isRegolith*/)
 	costFunc1 := newL1CostFuncBedrockHelper(baseFee, overhead, scalar, true)
 
-	c0, g0 := costFunc0(emptyTx.RollupCostData()) // pre-Regolith
-	c1, g1 := costFunc1(emptyTx.RollupCostData())
+	c0, g0 := costFunc0(emptyTxWithGasPrice.RollupCostData()) // pre-Regolith
+	c1, g1 := costFunc1(emptyTxWithGasPrice.RollupCostData())
 
 	require.Equal(t, bedrockFee, c0)
 	require.Equal(t, bedrockGas, g0) // gas-used
@@ -57,7 +57,7 @@ func TestBedrockL1CostFunc(t *testing.T) {
 func TestEcotoneL1CostFunc(t *testing.T) {
 	costFunc := newL1CostFuncEcotone(baseFee, blobBaseFee, baseFeeScalar, blobBaseFeeScalar)
 
-	c0, g0 := costFunc(emptyTx.RollupCostData())
+	c0, g0 := costFunc(emptyTxWithGasPrice.RollupCostData())
 
 	require.Equal(t, ecotoneGas, g0)
 	require.Equal(t, ecotoneFee, c0)
@@ -138,10 +138,10 @@ func TestExtractBedrockGasParams(t *testing.T) {
 	costFuncRegolith := gasparams.costFunc
 	require.NoError(t, err)
 
-	c, _ := costFuncPreRegolith(emptyTx.RollupCostData())
+	c, _ := costFuncPreRegolith(emptyTxWithGasPrice.RollupCostData())
 	require.Equal(t, bedrockFee, c)
 
-	c, _ = costFuncRegolith(emptyTx.RollupCostData())
+	c, _ = costFuncRegolith(emptyTxWithGasPrice.RollupCostData())
 	require.Equal(t, regolithFee, c)
 
 	// try to extract from data which has not enough params, should get error.
@@ -171,7 +171,7 @@ func TestExtractEcotoneGasParams(t *testing.T) {
 	require.NoError(t, err)
 	costFunc := gasparams.costFunc
 
-	c, g := costFunc(emptyTx.RollupCostData())
+	c, g := costFunc(emptyTxWithGasPrice.RollupCostData())
 
 	require.Equal(t, ecotoneGas, g)
 	require.Equal(t, ecotoneFee, c)
@@ -261,7 +261,7 @@ func TestFirstBlockEcotoneGasParams(t *testing.T) {
 	gasparams, err := extractL1GasParams(config, zeroTime, data)
 	require.NoError(t, err)
 	oldCostFunc := gasparams.costFunc
-	c, g := oldCostFunc(emptyTx.RollupCostData())
+	c, g := oldCostFunc(emptyTxWithGasPrice.RollupCostData())
 	require.Equal(t, regolithGas, g)
 	require.Equal(t, regolithFee, c)
 }
@@ -380,7 +380,7 @@ func TestNewL1CostFunc(t *testing.T) {
 	require.Nil(t, fee)
 
 	// emptyTx fee w/ bedrock config should be the bedrock fee
-	fee = costFunc(emptyTx.RollupCostData(), time)
+	fee = costFunc(emptyTxWithGasPrice.RollupCostData(), time)
 	require.NotNil(t, fee)
 	require.Equal(t, bedrockFee, fee)
 
@@ -388,21 +388,21 @@ func TestNewL1CostFunc(t *testing.T) {
 	config.RegolithTime = &time
 	costFunc = NewL1CostFunc(config, statedb)
 	require.NotNil(t, costFunc)
-	fee = costFunc(emptyTx.RollupCostData(), time)
+	fee = costFunc(emptyTxWithGasPrice.RollupCostData(), time)
 	require.NotNil(t, fee)
 	require.Equal(t, regolithFee, fee)
 
 	// emptyTx fee w/ ecotone config should be the ecotone fee
 	config.EcotoneTime = &time
 	costFunc = NewL1CostFunc(config, statedb)
-	fee = costFunc(emptyTx.RollupCostData(), time)
+	fee = costFunc(emptyTxWithGasPrice.RollupCostData(), time)
 	require.NotNil(t, fee)
 	require.Equal(t, ecotoneFee, fee)
 
 	// emptyTx fee w/ fjord config should be the fjord fee
 	config.FjordTime = &time
 	costFunc = NewL1CostFunc(config, statedb)
-	fee = costFunc(emptyTx.RollupCostData(), time)
+	fee = costFunc(emptyTxWithGasPrice.RollupCostData(), time)
 	require.NotNil(t, fee)
 	require.Equal(t, fjordFee, fee)
 
@@ -413,7 +413,7 @@ func TestNewL1CostFunc(t *testing.T) {
 	statedb.blobBaseFeeScalar = 0
 	statedb.blobBaseFee = new(big.Int)
 	costFunc = NewL1CostFunc(config, statedb)
-	fee = costFunc(emptyTx.RollupCostData(), time)
+	fee = costFunc(emptyTxWithGasPrice.RollupCostData(), time)
 	require.NotNil(t, fee)
 	require.Equal(t, regolithFee, fee)
 
@@ -425,7 +425,7 @@ func TestNewL1CostFunc(t *testing.T) {
 	statedb.blobBaseFeeScalar = 0
 	statedb.blobBaseFee = new(big.Int)
 	costFunc = NewL1CostFunc(config, statedb)
-	fee = costFunc(emptyTx.RollupCostData(), time)
+	fee = costFunc(emptyTxWithGasPrice.RollupCostData(), time)
 	require.NotNil(t, fee)
 	require.Equal(t, regolithFee, fee)
 }
@@ -508,7 +508,15 @@ func TestFlzCompressLen(t *testing.T) {
 var emptyTxWithGas = NewTransaction(
 	0,
 	common.HexToAddress("095e7baea6a6c7c4c2dfeb977efac326af552d87"),
-	big.NewInt(0), bedrockGas.Uint64(), big.NewInt(0),
+	big.NewInt(0), bedrockGas.Uint64(), big.NewInt(1),
+	nil,
+)
+
+// copy of emptyTx with non-zero gas
+var emptyTxWithGasPrice = NewTransaction(
+	0,
+	common.HexToAddress("095e7baea6a6c7c4c2dfeb977efac326af552d87"),
+	big.NewInt(0), 0, big.NewInt(1),
 	nil,
 )
 

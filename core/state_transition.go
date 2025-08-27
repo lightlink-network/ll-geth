@@ -26,6 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/holiman/uint256"
@@ -169,6 +170,7 @@ type Message struct {
 	IsDepositTx    bool                 // IsDepositTx indicates the message is force-included and can persist a mint.
 	Mint           *big.Int             // Mint is the amount to mint before EVM processing, or nil if there is no minting.
 	RollupCostData types.RollupCostData // RollupCostData caches data to compute the fee we charge for data availability
+	IsGaslessTx    bool                 // IsGaslessTx indicates the message is a gasless transaction.
 }
 
 // TransactionToMessage converts a transaction into a Message.
@@ -193,6 +195,7 @@ func TransactionToMessage(tx *types.Transaction, s types.Signer, baseFee *big.In
 		IsDepositTx:    tx.IsDepositTx(),
 		Mint:           tx.Mint(),
 		RollupCostData: tx.RollupCostData(),
+		IsGaslessTx:    tx.IsGaslessTx(),
 	}
 	// If baseFee provided, set gasPrice to effectiveGasPrice.
 	if baseFee != nil {
@@ -215,7 +218,20 @@ func TransactionToMessage(tx *types.Transaction, s types.Signer, baseFee *big.In
 // state and would never be accepted within a block.
 func ApplyMessage(evm *vm.EVM, msg *Message, gp *GasPool) (*ExecutionResult, error) {
 	evm.SetTxContext(NewEVMTxContext(msg))
-	return newStateTransition(evm, msg, gp).execute()
+
+	// Pre-validate gasless transaction before gas metering starts
+	var gasStationStorageSlots *GasStationStorageSlots
+	if msg.IsGaslessTx {
+		_, _, slots, err := ValidateGaslessTx(msg.To, msg.From, msg.GasLimit, evm.StateDB)
+		if err != nil {
+			return nil, err
+		}
+		gasStationStorageSlots = slots
+	}
+
+	st := newStateTransition(evm, msg, gp)
+	st.gasStationStorageSlots = gasStationStorageSlots
+	return st.execute()
 }
 
 // stateTransition represents a state transition.
@@ -241,12 +257,13 @@ func ApplyMessage(evm *vm.EVM, msg *Message, gp *GasPool) (*ExecutionResult, err
 //  5. Run Script section
 //  6. Derive new state root
 type stateTransition struct {
-	gp           *GasPool
-	msg          *Message
-	gasRemaining uint64
-	initialGas   uint64
-	state        vm.StateDB
-	evm          *vm.EVM
+	gp                     *GasPool
+	msg                    *Message
+	gasRemaining           uint64
+	initialGas             uint64
+	state                  vm.StateDB
+	evm                    *vm.EVM
+	gasStationStorageSlots *GasStationStorageSlots
 }
 
 // newStateTransition initialises and returns a new state transition object.
@@ -371,6 +388,14 @@ func (st *stateTransition) preCheck() error {
 			return fmt.Errorf("%w: address %v, len(code): %d", ErrSenderNoEOA, msg.From.Hex(), len(code))
 		}
 	}
+
+	// Give EVM gas for free if gasless txn
+	if st.msg.IsGaslessTx {
+		st.initialGas = st.msg.GasLimit
+		st.gasRemaining += st.msg.GasLimit
+		return st.gp.SubGas(st.msg.GasLimit)
+	}
+
 	// Make sure that transaction gasFeeCap is greater than the baseFee (post london)
 	if st.evm.ChainConfig().IsLondon(st.evm.Context.BlockNumber) {
 		// Skip the checks if gas fields are zero and baseFee was explicitly disabled (eth_call)
@@ -628,10 +653,15 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 	}
 	st.returnGas()
 
+	// Handle gasless transaction credit deduction AFTER refunds are applied
+	if msg.IsGaslessTx && st.gasStationStorageSlots != nil {
+		st.handleGaslessPostExecution()
+	}
+
 	// OP-Stack: Note for deposit tx there is no ETH refunded for unused gas, but that's taken care of by the fact that gasPrice
 	// is always 0 for deposit tx. So calling refundGas will ensure the gasUsed accounting is correct without actually
 	// changing the sender's balance.
-	if st.msg.IsDepositTx && rules.IsOptimismRegolith {
+	if (st.msg.IsDepositTx && rules.IsOptimismRegolith) || st.msg.IsGaslessTx {
 		// Skip coinbase payments for deposit tx in Regolith
 		return &ExecutionResult{
 			UsedGas:     st.gasUsed(),
@@ -811,4 +841,54 @@ func (st *stateTransition) gasUsed() uint64 {
 // blobGasUsed returns the amount of blob gas used by the message.
 func (st *stateTransition) blobGasUsed() uint64 {
 	return uint64(len(st.msg.BlobHashes) * params.BlobTxBlobGasPerBlob)
+}
+
+// handleGaslessPostExecution handles credit deduction and state updates for gasless transactions
+// This method is called OUTSIDE of gas metering to avoid affecting gas usage
+func (st *stateTransition) handleGaslessPostExecution() {
+	slots := st.gasStationStorageSlots
+
+	// Read current credits and deduct gas used
+	availableCredits := st.state.GetState(params.GasStationAddress, slots.CreditSlotHash)
+	availableCreditsBig := new(big.Int).SetBytes(availableCredits.Bytes())
+	txRequiredCreditsBig := new(big.Int).SetUint64(st.gasUsed())
+
+	// Calculate new credits after transaction
+	newCredits := new(big.Int).Sub(availableCreditsBig, txRequiredCreditsBig)
+	if newCredits.Sign() < 0 {
+		// Safety net – should never happen but avoids corrupting state
+		newCredits = big.NewInt(0)
+	}
+
+	// Update credit balance
+	st.state.SetState(params.GasStationAddress, slots.CreditSlotHash, common.BigToHash(newCredits))
+
+	// Handle single-use marking if enabled
+	singleUseEnabled := st.state.GetState(params.GasStationAddress, slots.SingleUseEnabledSlotHash)
+	isSingleUseEnabled := singleUseEnabled[31] == 0x01
+
+	if isSingleUseEnabled {
+		// Calculate slot for the specific user in the nested usedAddresses map
+		userKeyPadded := common.LeftPadBytes(st.msg.From.Bytes(), 32)
+		mapBaseSlotPadded := common.LeftPadBytes(slots.UsedAddressesMapBaseSlotHash.Bytes(), 32)
+		userCombined := append(userKeyPadded, mapBaseSlotPadded...)
+		userUsedSlotHash := crypto.Keccak256Hash(userCombined)
+
+		// Mark the user as having used gasless transactions
+		st.state.SetState(params.GasStationAddress, userUsedSlotHash, common.HexToHash("0x01"))
+	}
+
+	// // Emit credits used event
+	// gasUsedBig := new(big.Int).SetUint64(st.gasUsed())
+	// data, err := CreditsUsedEventArgs.Pack(st.msg.From, gasUsedBig)
+	// if err == nil {
+	// 	st.state.AddLog(&types.Log{
+	// 		Address: params.GasStationAddress,
+	// 		Topics: []common.Hash{
+	// 			CreditsUsedEventSignature,
+	// 			common.BytesToHash(st.msg.To.Bytes()), // contractAddress (indexed)
+	// 		},
+	// 		Data: data,
+	// 	})
+	// }
 }
