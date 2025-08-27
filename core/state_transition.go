@@ -878,17 +878,17 @@ func (st *stateTransition) handleGaslessPostExecution() {
 		st.state.SetState(params.GasStationAddress, userUsedSlotHash, common.HexToHash("0x01"))
 	}
 
-	// Emit credits used event
-	gasUsedBig := new(big.Int).SetUint64(st.gasUsed())
-	data, err := CreditsUsedEventArgs.Pack(st.msg.From, gasUsedBig)
-	if err == nil {
-		st.state.AddLog(&types.Log{
-			Address: params.GasStationAddress,
-			Topics: []common.Hash{
-				CreditsUsedEventSignature,
-				common.BytesToHash(st.msg.To.Bytes()), // contractAddress (indexed)
-			},
-			Data: data,
-		})
-	}
+	// // Emit credits used event
+	// gasUsedBig := new(big.Int).SetUint64(st.gasUsed())
+	// data, err := CreditsUsedEventArgs.Pack(st.msg.From, gasUsedBig)
+	// if err == nil {
+	// 	st.state.AddLog(&types.Log{
+	// 		Address: params.GasStationAddress,
+	// 		Topics: []common.Hash{
+	// 			CreditsUsedEventSignature,
+	// 			common.BytesToHash(st.msg.To.Bytes()), // contractAddress (indexed)
+	// 		},
+	// 		Data: data,
+	// 	})
+	// }
 }
